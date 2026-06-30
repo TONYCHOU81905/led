@@ -13,7 +13,9 @@
 #define MAX_PARTS 8
 #define MAX_RANGES_PER_PART 4
 #define MAX_TARGETS_PER_EVENT 4
-#define MAX_EVENTS 128
+#ifndef MAX_EVENTS
+#define MAX_EVENTS 1024
+#endif
 #define MAX_COLORS 32
 #define MAX_PART_ID_LEN 16
 

@@ -3,10 +3,14 @@ import {
   encodeTimecodePacket,
   decodeTimecodePacket,
   PacketType,
-  TIMECODE_MAGIC
+  TIMECODE_MAGIC,
+  TIMECODE_RATE_HZ
 } from '../electron/services/timecodeBridge'
 
 describe('timecodeBridge packet', () => {
+  it('uses 100 Hz broadcast rate per spec', () => {
+    expect(TIMECODE_RATE_HZ).toBe(100)
+  })
   it('encodes and decodes TimecodePacketV1', () => {
     const buf = encodeTimecodePacket({
       packetType: PacketType.RUNNING,

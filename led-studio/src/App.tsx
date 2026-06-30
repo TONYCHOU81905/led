@@ -7,6 +7,7 @@ import { DeviceManagerPage } from './routes/DeviceManagerPage'
 import { LedChainPage } from './routes/LedChainPage'
 import { TimelinePage } from './routes/TimelinePage'
 import { ShowControlPage } from './routes/ShowControlPage'
+import { CalibrationPage } from './routes/CalibrationPage'
 import './App.css'
 
 /** file:// 打包版 Electron 必須用 HashRouter，否則 pathname 對不上 Routes */
@@ -28,6 +29,7 @@ function AppShell() {
         <NavLink to="/led-chain">LED 串聯</NavLink>
         <NavLink to="/devices">Devices</NavLink>
         <NavLink to="/show">Show Control</NavLink>
+        <NavLink to="/calibration">測試 / 校正</NavLink>
       </nav>
       <div className="main-column">
         <GlobalProjectToolbar />
@@ -39,6 +41,7 @@ function AppShell() {
             <Route path="/led-chain" element={<LedChainPage />} />
             <Route path="/devices" element={<DeviceManagerPage />} />
             <Route path="/show" element={<ShowControlPage />} />
+            <Route path="/calibration" element={<CalibrationPage />} />
           </Routes>
         </main>
       </div>

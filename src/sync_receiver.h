@@ -13,6 +13,7 @@ public:
 
   uint32_t packetsReceived() const { return _rx_count; }
   uint32_t packetsDropped() const { return _drop_count; }
+  uint32_t lastPacketMs() const { return _last_packet_ms; }
 
 private:
   bool validatePacket(const TimecodePacketV1 &pkt) const;
@@ -23,4 +24,5 @@ private:
   uint32_t _rx_count = 0;
   uint32_t _drop_count = 0;
   uint32_t _last_seq = 0;
+  uint32_t _last_packet_ms = 0;
 };

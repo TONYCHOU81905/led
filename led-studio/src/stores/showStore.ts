@@ -8,6 +8,7 @@ interface ShowState {
 
 const defaultBridge: BridgeState = {
   running: false,
+  paused: false,
   source: 'manual',
   musicTimeMs: 0,
   sequence: 0,

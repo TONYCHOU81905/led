@@ -14,12 +14,14 @@ function buildConfigFromProject(
   project: NonNullable<ReturnType<typeof useProjectStore.getState>['project']>,
   roleId: string,
   dataGpio: number,
+  ledType: 'WS2811' | 'WS2812B',
   ssid: string,
   password: string
 ): DeviceConfig {
   return compileProjectRole(project, roleId, {
     ...defaultCompileOptions(roleId),
     dataGpio,
+    ledType,
     network: { ssid, password, timecode_port: 4210, device_status_port: 4211 }
   })
 }
@@ -33,6 +35,7 @@ export function DeviceManagerPage() {
   const [ssid, setSsid] = useState('')
   const [password, setPassword] = useState('')
   const [dataGpio, setDataGpio] = useState(8)
+  const [ledType, setLedType] = useState<'WS2811' | 'WS2812B'>('WS2811')
   const [loadedConfig, setLoadedConfig] = useState<DeviceConfig | null>(null)
   const [loadedConfigLabel, setLoadedConfigLabel] = useState<string | null>(null)
   const [log, setLog] = useState<string[]>([])
@@ -119,7 +122,7 @@ export function DeviceManagerPage() {
 
   const resolveConfig = (): DeviceConfig => {
     if (loadedConfig) return loadedConfig
-    return buildConfigFromProject(project, roleId, dataGpio, ssid, password)
+    return buildConfigFromProject(project, roleId, dataGpio, ledType, ssid, password)
   }
 
   const loadConfigFile = async () => {
@@ -206,6 +209,14 @@ export function DeviceManagerPage() {
         </label>
 
         <label className="device-field">
+          <span className="device-field-label">LED 燈條 IC</span>
+          <select value={ledType} onChange={(e) => setLedType(e.target.value as 'WS2811' | 'WS2812B')}>
+            <option value="WS2811">WS2811（400 kHz，預設）</option>
+            <option value="WS2812B">WS2812B（800 kHz）</option>
+          </select>
+        </label>
+
+        <label className="device-field">
           <span className="device-field-label">LED GPIO</span>
           <input type="number" value={dataGpio} onChange={(e) => setDataGpio(Number(e.target.value))} />
         </label>
@@ -230,7 +241,7 @@ export function DeviceManagerPage() {
 
       <p className="device-hint">
         避免選到 <code>/dev/tty.debug-console</code> 或 <code>wlan-debug</code>。接上 ESP32 後按「重新掃描」，或手動輸入 macOS 埠名。
-        Config 上傳後目前存在 ESP <strong>RAM</strong>（重開機需重傳）；WiFi 寫入 <strong>NVS</strong> 會保留。
+        Config 上傳後寫入 ESP <strong>Flash (LittleFS)</strong>，重開機仍保留；WiFi 寫入 <strong>NVS</strong>。
       </p>
 
       <div className="actions device-actions">

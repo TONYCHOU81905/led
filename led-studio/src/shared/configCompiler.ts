@@ -14,6 +14,7 @@ export interface CompileOptions {
   deviceId: string
   ledCount?: number
   dataGpio?: number
+  ledType?: 'WS2811' | 'WS2812B'
   maxBrightness?: number
   network?: {
     ssid: string
@@ -63,6 +64,7 @@ export function compileRoleToDeviceConfig(
       display_name: role.display_name,
       led_count: ledCount,
       data_gpio: options.dataGpio ?? 8,
+      led_type: options.ledType ?? 'WS2811',
       max_brightness: options.maxBrightness ?? 0.4
     },
     network: options.network ?? {
@@ -138,6 +140,7 @@ export function compileProjectRole(
     ledCount: options.ledCount,
     dataGpio: options.dataGpio,
     maxBrightness: options.maxBrightness,
+    ledType: options.ledType,
     network: options.network
   })
 }

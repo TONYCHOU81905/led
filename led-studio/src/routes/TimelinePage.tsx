@@ -4,7 +4,7 @@ import { TimelineEditor } from '../features/timeline/TimelineEditor'
 import { useProjectStore } from '../stores/projectStore'
 
 export function TimelinePage() {
-  const { project, activeRoleId, setActiveRole, activeRole, updateProject, lastRepairFixes, repairCurrentProject } =
+  const { project, projectFilePath, activeRoleId, setActiveRole, activeRole, updateProject, lastRepairFixes, repairCurrentProject } =
     useProjectStore()
   const role = activeRole()
 
@@ -61,7 +61,12 @@ export function TimelinePage() {
         </div>
       )}
       {role ? (
-        <TimelineEditor project={project} role={role} onProjectChange={(p) => updateProject(() => p)} />
+        <TimelineEditor
+          project={project}
+          projectFilePath={projectFilePath}
+          role={role}
+          onProjectChange={(p) => updateProject(() => p)}
+        />
       ) : (
         <p className="error-banner">此專案沒有舞者。請到 Dashboard 新建專案或到「舞者 CRUD」新增。</p>
       )}

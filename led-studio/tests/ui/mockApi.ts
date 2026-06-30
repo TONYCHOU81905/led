@@ -26,6 +26,7 @@ export interface MockApi {
 export function createMockApi(): MockApi {
   let bridgeState: BridgeState = {
     running: false,
+    paused: false,
     source: 'manual',
     musicTimeMs: 0,
     sequence: 0,
@@ -58,14 +59,24 @@ export function createMockApi(): MockApi {
     readMusicFile: vi.fn(async () => ({
       data: new Uint8Array([0]),
       mime: 'audio/mpeg'
-    }))
+    })),
+    loadWaveformCache: vi.fn(async () => null)
     },
     show: {
       bridgeStart: vi.fn(async () => {
-        emitBridgeState({ running: true, source: 'manual', musicTimeMs: 0, sequence: 1, packetsPerSecond: 50 })
+        emitBridgeState({ running: true, paused: false, source: 'manual', musicTimeMs: 0, sequence: 1, packetsPerSecond: 100 })
       }),
       bridgeStop: vi.fn(async () => {
-        emitBridgeState({ running: false, packetsPerSecond: 0 })
+        emitBridgeState({ running: false, paused: false, packetsPerSecond: 0 })
+      }),
+      bridgePause: vi.fn(async () => {
+        emitBridgeState({ paused: true })
+      }),
+      bridgeResume: vi.fn(async () => {
+        emitBridgeState({ paused: false })
+      }),
+      bridgeSeek: vi.fn(async (ms: number) => {
+        emitBridgeState({ musicTimeMs: ms })
       }),
       bridgeGetState: vi.fn(async () => bridgeState),
       ltcStart: vi.fn(async () => undefined),
@@ -74,13 +85,19 @@ export function createMockApi(): MockApi {
         bridgeListeners.add(cb)
         cb(bridgeState)
         return () => bridgeListeners.delete(cb)
-      })
+      }),
+      onEspStatus: vi.fn((cb) => {
+        cb([])
+        return () => undefined
+      }),
+      espStatusList: vi.fn(async () => [])
     },
     device: {
       listPorts: vi.fn(async () => [{ path: '/dev/cu.usbserial-mock', manufacturer: 'Espressif' }]),
       ping: vi.fn(async () => ({ ok: true, firmware: '0.1.0-test', device_id: 'esp32s3_mock' })),
       setWifi: vi.fn(async () => ({ ok: true })),
-      uploadConfig: vi.fn(async () => ({ ok: true, crc32: 1234, events: 1 })),
+      uploadConfig: vi.fn(async () => ({ ok: true, crc32: 1234, events: 1, flash_saved: true })),
+      reloadConfig: vi.fn(async () => ({ ok: true, crc32: 1234, events: 1 })),
       getStatus: vi.fn(async () => ({ ok: true, wifi: 'connected' })),
       flashFirmware: vi.fn(async (_port, onProgress) => {
         onProgress({ stage: 'flash', message: 'mock flash ok' })

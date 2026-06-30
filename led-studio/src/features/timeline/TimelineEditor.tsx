@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { LedProject, RoleDefinition, TimelineEventUI, TimelineKeyframe } from '../../shared/types/project'
-import { formatMsToTime } from '../../shared/timeParse'
+import { formatMsToTime, parseTimeToMs } from '../../shared/timeParse'
 import { deleteEvent, newEventId, updateEvent } from '../../shared/projectMutations'
 import { compileProjectRole, configChecksum } from '../../shared/configCompiler'
 import { defaultCompileOptions, deviceConfigFilename } from '../../shared/deviceConfigDefaults'
@@ -12,6 +12,7 @@ import { useTimelineViewport } from './hooks/useTimelineViewport'
 
 interface TimelineEditorProps {
   project: LedProject
+  projectFilePath?: string | null
   role: RoleDefinition
   onProjectChange: (project: LedProject) => void
 }
@@ -21,7 +22,7 @@ function basename(path: string): string {
   return parts[parts.length - 1] ?? path
 }
 
-export function TimelineEditor({ project, role, onProjectChange }: TimelineEditorProps) {
+export function TimelineEditor({ project, projectFilePath, role, onProjectChange }: TimelineEditorProps) {
   const durationMs = project.project.music_duration_ms
   const {
     scrollMs,
@@ -84,8 +85,24 @@ export function TimelineEditor({ project, role, onProjectChange }: TimelineEdito
     setMusicLoading(true)
     setMusicError(null)
 
-    void loadMusicFromPath(project.project.music_file)
-      .then(({ objectUrl, durationMs: decodedMs, peaks }) => {
+    const tryWaveformCache = async (): Promise<number[] | null> => {
+      if (!window.api?.project.loadWaveformCache) return null
+      try {
+        const cached = await window.api.project.loadWaveformCache(
+          project.project.music_file!,
+          projectFilePath ?? undefined
+        )
+        return cached?.peaks ?? null
+      } catch {
+        return null
+      }
+    }
+
+    void Promise.all([
+      loadMusicFromPath(project.project.music_file),
+      tryWaveformCache()
+    ])
+      .then(([{ objectUrl, durationMs: decodedMs, peaks }, cachedPeaks]) => {
         if (cancelled) {
           URL.revokeObjectURL(objectUrl)
           return
@@ -93,7 +110,7 @@ export function TimelineEditor({ project, role, onProjectChange }: TimelineEdito
         revoke()
         objectUrlRef.current = objectUrl
         setMusicUrl(objectUrl)
-        setWaveformPeaks(peaks)
+        setWaveformPeaks(cachedPeaks ?? peaks)
         if (decodedMs > 0 && decodedMs !== project.project.music_duration_ms) {
           onProjectChange({
             ...project,
@@ -162,26 +179,44 @@ export function TimelineEditor({ project, role, onProjectChange }: TimelineEdito
     }
   }, [musicUrl, followPlayhead])
 
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== 'Delete' && e.key !== 'Backspace') return
-      if (!selectedId) return
-      const tag = (e.target as HTMLElement).tagName
-      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return
-      e.preventDefault()
-      onProjectChange(deleteEvent(project, role.role_id, selectedId))
-      setSelectedId(null)
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [selectedId, project, role.role_id, onProjectChange])
-
   const setEvents = (events: TimelineEventUI[]) => {
     onProjectChange({
       ...project,
       roles: project.roles.map((r) => (r.role_id === role.role_id ? { ...r, events } : r))
     })
   }
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName
+      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return
+
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd') {
+        if (!selectedId) return
+        const source = role.events.find((ev) => ev.id === selectedId)
+        if (!source) return
+        e.preventDefault()
+        const beatMs = 60000 / project.project.bpm
+        const dup: TimelineEventUI = {
+          ...source,
+          id: newEventId(),
+          from: formatMsToTime(parseTimeToMs(source.from) + beatMs),
+          to: formatMsToTime(parseTimeToMs(source.to) + beatMs)
+        }
+        setEvents([...role.events, dup])
+        setSelectedId(dup.id)
+        return
+      }
+
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return
+      if (!selectedId) return
+      e.preventDefault()
+      onProjectChange(deleteEvent(project, role.role_id, selectedId))
+      setSelectedId(null)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [selectedId, project, role.role_id, role.events, onProjectChange, project.project.bpm])
 
   const patchSelected = (patch: Partial<TimelineEventUI>) => {
     if (!selectedId) return

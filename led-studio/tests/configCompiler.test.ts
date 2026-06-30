@@ -39,6 +39,15 @@ describe('configCompiler', () => {
     expect(restored.events[0].to).toBe('0:30')
   })
 
+  it('compiles led_type into device config', async () => {
+    const demo = (await import('../examples/demo_show.ledproj.json')).default as LedProject
+    const device = compileRoleToDeviceConfig(demo.roles[0], demo.colors, {
+      deviceId: 'test',
+      ledType: 'WS2812B'
+    })
+    expect(device.device.led_type).toBe('WS2812B')
+  })
+
   it('produces stable checksum', async () => {
     const demo = (await import('../examples/demo_show.ledproj.json')).default as LedProject
     const device = compileRoleToDeviceConfig(demo.roles[0], demo.colors, {

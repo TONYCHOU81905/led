@@ -3,7 +3,7 @@ import type { BridgeOptions, BridgeState } from '../../src/shared/types/project'
 
 export const TIMECODE_MAGIC = 0x4c544331 // 'LTC1'
 export const TIMECODE_PORT = 4210
-export const TIMECODE_RATE_HZ = 50
+export const TIMECODE_RATE_HZ = 100
 
 export enum PacketType {
   START = 1,
@@ -97,6 +97,7 @@ export class TimecodeBridgeService {
   private musicTimeMs = 0
   private startedAt = 0
   private running = false
+  private paused = false
   private source: BridgeOptions['source'] = 'manual'
   private showIdCrc32 = 0
   private configCrc32 = 0
@@ -124,6 +125,7 @@ export class TimecodeBridgeService {
     const recent = this.packetTimestamps.filter((t) => now - t < 1000)
     return {
       running: this.running,
+      paused: this.paused,
       source: this.source ?? 'manual',
       musicTimeMs: this.musicTimeMs,
       sequence: this.sequence,
@@ -145,6 +147,7 @@ export class TimecodeBridgeService {
     this.externalTimeMs = null
     this.startedAt = Date.now()
     this.running = true
+    this.paused = false
     this.packetTimestamps = []
 
     this.socket = dgram.createSocket('udp4')
@@ -178,11 +181,39 @@ export class TimecodeBridgeService {
     this.socket?.close()
     this.socket = null
     this.running = false
+    this.paused = false
+    this.emit()
+  }
+
+  pause(): void {
+    if (!this.running || this.paused) return
+    this.paused = true
+    this.sendPacket(PacketType.PAUSE)
+    this.emit()
+  }
+
+  resume(): void {
+    if (!this.running || !this.paused) return
+    this.paused = false
+    if (this.source === 'manual') {
+      this.startedAt = Date.now() - this.musicTimeMs
+    }
+    this.sendPacket(PacketType.RUNNING)
+    this.emit()
+  }
+
+  seek(musicTimeMs: number): void {
+    if (!this.running) return
+    this.musicTimeMs = Math.max(0, musicTimeMs)
+    if (this.source === 'manual') {
+      this.startedAt = Date.now() - this.musicTimeMs
+    }
+    this.sendPacket(PacketType.SEEK)
     this.emit()
   }
 
   private tick(): void {
-    if (!this.running) return
+    if (!this.running || this.paused) return
 
     if (this.source === 'ltc' && this.externalTimeMs !== null) {
       this.musicTimeMs = this.externalTimeMs

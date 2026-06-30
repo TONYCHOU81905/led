@@ -4,6 +4,7 @@ export function defaultCompileOptions(roleId: string): CompileOptions {
   return {
     deviceId: `esp32s3_${roleId}_001`,
     dataGpio: 8,
+    ledType: 'WS2811',
     ledCount: 120,
     maxBrightness: 0.4,
     network: {

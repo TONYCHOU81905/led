@@ -55,6 +55,7 @@ export interface DeviceConfig {
     display_name: string
     led_count: number
     data_gpio: number
+    led_type?: 'WS2811' | 'WS2812B'
     max_brightness: number
   }
   network?: {
@@ -120,11 +121,31 @@ export interface BridgeOptions {
 
 export interface BridgeState {
   running: boolean
+  paused: boolean
   source: BridgeSource
   musicTimeMs: number
   sequence: number
   packetsPerSecond: number
   startedAt?: number
+}
+
+export interface EspDeviceStatus {
+  device_id: string
+  role_id?: string
+  sync_state?: string
+  music_time_ms?: number
+  drift_ms?: number
+  rssi?: number
+  battery_mv?: number
+  config_crc32?: string | number
+  last_seen_ms: number
+}
+
+export interface WaveformCacheResult {
+  durationMs: number
+  peaks: number[]
+  sourceHash: string
+  generatedAt: string
 }
 
 export interface OpenProjectResult {
@@ -148,20 +169,27 @@ export interface LedStudioApi {
     pickMusicFile(): Promise<{ path: string; durationMs?: number } | null>
     getMusicFileUrl(filePath: string): Promise<string>
     readMusicFile(filePath: string): Promise<{ data: Uint8Array; mime: string }>
+    loadWaveformCache(musicFilePath: string, projectFilePath?: string): Promise<WaveformCacheResult | null>
   }
   show: {
     bridgeStart(options?: BridgeOptions): Promise<void>
     bridgeStop(): Promise<void>
+    bridgePause(): Promise<void>
+    bridgeResume(): Promise<void>
+    bridgeSeek(musicTimeMs: number): Promise<void>
     bridgeGetState(): Promise<BridgeState>
     ltcStart(options?: { wavPath?: string; durationMs?: number }): Promise<void>
     ltcStop(): Promise<void>
     onBridgeState(cb: (state: BridgeState) => void): () => void
+    onEspStatus(cb: (devices: EspDeviceStatus[]) => void): () => void
+    espStatusList(): Promise<EspDeviceStatus[]>
   }
   device: {
     listPorts(): Promise<Array<{ path: string; manufacturer?: string }>>
     ping(port: string): Promise<{ ok: boolean; firmware?: string; device_id?: string }>
     setWifi(port: string, ssid: string, password: string): Promise<{ ok: boolean }>
-    uploadConfig(port: string, config: Record<string, unknown>): Promise<{ ok: boolean; crc32?: number; events?: number }>
+    uploadConfig(port: string, config: Record<string, unknown>): Promise<{ ok: boolean; crc32?: number; events?: number; flash_saved?: boolean }>
+    reloadConfig(port: string): Promise<{ ok: boolean; crc32?: number; events?: number }>
     getStatus(port: string): Promise<Record<string, unknown>>
     flashFirmware(port: string, onProgress: (p: { stage: string; message: string }) => void): Promise<void>
   }

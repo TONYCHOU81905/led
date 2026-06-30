@@ -15,7 +15,7 @@ test.describe('LED Show Studio E2E (real Electron)', () => {
     await expect(window.getByText(/Roles:/)).toBeVisible()
   })
 
-  it('Dancers: tab 切換與新增亮燈條件', async ({ window }) => {
+  test('Dancers: tab 切換與新增亮燈條件', async ({ window }) => {
     await createProject(window)
     await nav(window, '舞者 CRUD')
     await expect(window.getByRole('heading', { name: '舞者 / 亮燈條件' })).toBeVisible()
@@ -62,19 +62,27 @@ test.describe('LED Show Studio E2E (real Electron)', () => {
     await expect(window.getByRole('button', { name: 'Ping' })).toBeEnabled()
   })
 
-  test('Show Control: Bridge 啟停', async ({ window }) => {
+  test('Show Control: Bridge 啟停與 Pause', async ({ window }) => {
     await nav(window, 'Show Control')
     await expect(window.getByRole('heading', { name: 'Show Control' })).toBeVisible()
     const start = window.getByRole('button', { name: 'Start Bridge' })
     await start.click()
     await expect(window.getByText('RUNNING')).toBeVisible({ timeout: 10_000 })
+    await window.getByRole('button', { name: 'Pause' }).click()
+    await expect(window.getByText('PAUSED')).toBeVisible({ timeout: 10_000 })
     await window.getByRole('button', { name: 'Stop Bridge' }).click()
     await expect(window.getByText('STOPPED')).toBeVisible({ timeout: 10_000 })
   })
 
+  test('Calibration 頁面可達', async ({ window }) => {
+    await nav(window, '測試 / 校正')
+    await expect(window.getByRole('heading', { name: '測試 / 校正' })).toBeVisible()
+    await expect(window.getByText('同步驗收目標 ±10 ms')).toBeVisible()
+  })
+
   test('Sidebar 導航全頁可達', async ({ window }) => {
     await createProject(window)
-    const pages = ['Dashboard', '舞者 CRUD', 'Timeline', 'LED 串聯', 'Devices', 'Show Control'] as const
+    const pages = ['Dashboard', '舞者 CRUD', 'Timeline', 'LED 串聯', 'Devices', 'Show Control', '測試 / 校正'] as const
     for (const p of pages) {
       await nav(window, p)
       await expect(window.locator('main.content')).toBeVisible()

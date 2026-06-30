@@ -51,6 +51,7 @@ beforeEach(() => {
   useShowStore.setState({
     bridge: {
       running: false,
+      paused: false,
       source: 'manual',
       musicTimeMs: 0,
       sequence: 0,

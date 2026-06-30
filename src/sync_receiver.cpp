@@ -42,6 +42,7 @@ bool SyncReceiver::validatePacket(const TimecodePacketV1 &pkt) const {
 void SyncReceiver::handlePacket(const TimecodePacketV1 &pkt, ClockSync &clock,
                                 AppSyncState &state) {
   const int64_t now_us = esp_timer_get_time();
+  _last_packet_ms = static_cast<uint32_t>(now_us / 1000);
   _last_seq = pkt.sequence;
 
   switch (pkt.packet_type) {

@@ -3,15 +3,18 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { readFile, writeFile } from 'node:fs/promises'
 import { flashFirmware } from './services/flasher'
+import { espStatusListener, type EspDeviceStatus } from './services/espStatusListener'
 import { ltcSidecar } from './services/ltcSidecar'
 import {
   getEspStatus,
   listSerialPorts,
   pingEsp,
+  reloadEspConfig,
   setEspWifi,
   uploadEspConfig
 } from './services/serialDevice'
 import { timecodeBridge } from './services/timecodeBridge'
+import { loadOrBuildWaveformCache } from './services/waveformCache'
 import { resolveAppResource } from './utils/paths'
 import { openProjectFromFile, readProjectFile, saveProjectToFile } from './services/projectBundle'
 import type { BridgeOptions, DeviceConfig, LedProject } from '../src/shared/types/project'
@@ -31,6 +34,12 @@ function pushBridgeState(): void {
   const state = timecodeBridge.getState()
   for (const win of BrowserWindow.getAllWindows()) {
     win.webContents.send('show:bridgeState', state)
+  }
+}
+
+function pushEspStatus(devices: EspDeviceStatus[]): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send('show:espStatus', devices)
   }
 }
 
@@ -55,6 +64,8 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   timecodeBridge.subscribe(pushBridgeState)
+  espStatusListener.subscribe(pushEspStatus)
+  espStatusListener.start(4211)
 
   ltcSidecar.subscribe((ms) => {
     timecodeBridge.setExternalTimeMs(ms)
@@ -170,7 +181,24 @@ app.whenReady().then(() => {
     pushBridgeState()
   })
 
+  ipcMain.handle('show:bridgePause', async () => {
+    timecodeBridge.pause()
+    pushBridgeState()
+  })
+
+  ipcMain.handle('show:bridgeResume', async () => {
+    timecodeBridge.resume()
+    pushBridgeState()
+  })
+
+  ipcMain.handle('show:bridgeSeek', async (_event, musicTimeMs: number) => {
+    timecodeBridge.seek(musicTimeMs)
+    pushBridgeState()
+  })
+
   ipcMain.handle('show:bridgeGetState', async () => timecodeBridge.getState())
+
+  ipcMain.handle('show:espStatusList', async () => espStatusListener.listDevices())
 
   ipcMain.handle('show:ltcStart', async (_event, options?: { wavPath?: string; durationMs?: number }) => {
     ltcSidecar.start({ wavPath: options?.wavPath, simulate: !options?.wavPath, durationMs: options?.durationMs })
@@ -192,7 +220,19 @@ app.whenReady().then(() => {
     uploadEspConfig(port, config)
   )
 
+  ipcMain.handle('device:reloadConfig', async (_event, port: string) => reloadEspConfig(port))
+
   ipcMain.handle('device:getStatus', async (_event, port: string) => getEspStatus(port))
+
+  ipcMain.handle(
+    'project:loadWaveformCache',
+    async (_event, musicFilePath: string, projectFilePath?: string) => {
+      const resolved = musicFilePath.startsWith('/')
+        ? musicFilePath
+        : resolveAppResource(musicFilePath)
+      return loadOrBuildWaveformCache(resolved, projectFilePath)
+    }
+  )
 
   ipcMain.handle('device:flashFirmware', async (event, port: string) => {
     await flashFirmware(port, (progress) => {
@@ -212,6 +252,7 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   ltcSidecar.stop()
   timecodeBridge.stop()
+  espStatusListener.stop()
   if (process.platform !== 'darwin') {
     app.quit()
   }

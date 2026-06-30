@@ -20,6 +20,14 @@ static TimelineEngine g_timeline;
 static AppSyncState g_state = STATE_BOOT;
 
 static int64_t last_frame_us = 0;
+static bool g_timecode_blackout = false;
+
+#ifndef TIMECODE_HOLD_MS
+#define TIMECODE_HOLD_MS 500
+#endif
+#ifndef TIMECODE_BLACKOUT_MS
+#define TIMECODE_BLACKOUT_MS 2000
+#endif
 
 static void renderStateIndicator(uint32_t now_ms) {
   switch (g_state) {
@@ -112,10 +120,30 @@ void loop() {
   applySerialPendingAction(g_serial.takePendingAction());
   g_status.tick(now_ms, g_config, g_state, g_clock, g_sync_rx);
 
+  if ((g_state == STATE_PLAYING || g_state == STATE_PAUSED) && g_clock.hasSync()) {
+    const uint32_t last_pkt = g_sync_rx.lastPacketMs();
+    if (last_pkt > 0) {
+      const uint32_t gap = now_ms - last_pkt;
+      if (gap > TIMECODE_BLACKOUT_MS) {
+        if (!g_timecode_blackout) {
+          g_timecode_blackout = true;
+          Serial.printf("[sync] blackout: no timecode for %u ms\n", gap);
+        }
+      } else if (gap > TIMECODE_HOLD_MS) {
+        g_timecode_blackout = false;
+        // continue_local: clock keeps running without new packets
+      } else {
+        g_timecode_blackout = false;
+      }
+    }
+  } else {
+    g_timecode_blackout = false;
+  }
+
   if (now_us - last_frame_us >= FRAME_INTERVAL_US) {
     last_frame_us = now_us;
 
-    if (g_state == STATE_PLAYING && g_clock.isPlaying()) {
+    if (g_state == STATE_PLAYING && g_clock.isPlaying() && !g_timecode_blackout) {
       const uint32_t t = g_clock.musicTimeMs(now_us);
       g_timeline.render(t, g_leds);
     } else {
