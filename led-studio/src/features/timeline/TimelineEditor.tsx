@@ -5,6 +5,7 @@ import { deleteEvent, newEventId, updateEvent } from '../../shared/projectMutati
 import { compileProjectRole, configChecksum } from '../../shared/configCompiler'
 import { defaultCompileOptions, deviceConfigFilename } from '../../shared/deviceConfigDefaults'
 import { loadMusicFromPath } from './audioAnalysis'
+import { DancerPreviewPanel } from '../preview/DancerPreviewPanel'
 import { EventInspector } from './EventInspector'
 import { TimelineCanvas } from './TimelineCanvas'
 import { useSnapGrid } from './hooks/useSnapGrid'
@@ -44,6 +45,7 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
   const [musicError, setMusicError] = useState<string | null>(null)
   const [configNotice, setConfigNotice] = useState<string | null>(null)
   const [configError, setConfigError] = useState<string | null>(null)
+  const [previewOpen, setPreviewOpen] = useState(false)
   const audioRef = useRef<HTMLAudioElement>(null)
   const objectUrlRef = useRef<string | null>(null)
   const playheadRafRef = useRef<number>(0)
@@ -323,7 +325,7 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
   }
 
   return (
-    <div className="timeline-studio">
+    <div className={`timeline-studio${previewOpen ? ' timeline-studio--preview-open' : ''}`}>
       <div className="timeline-transport">
         <div className="transport-group transport-clock">
           <span className="transport-time">{formatMsToTime(playheadMs)}</span>
@@ -369,6 +371,15 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
           <button type="button" className="btn btn-sm" onClick={() => void exportDeviceConfig()} title="匯出 ESP device config JSON">
             匯出 Config
           </button>
+          <button
+            type="button"
+            className={`btn btn-sm${previewOpen ? ' btn-toggle-active' : ''}`}
+            onClick={() => setPreviewOpen((open) => !open)}
+            title={previewOpen ? '隱藏燈光預覽' : '顯示燈光預覽'}
+            aria-pressed={previewOpen}
+          >
+            燈光預覽
+          </button>
         </div>
       </div>
 
@@ -379,48 +390,61 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
         </div>
       )}
 
-      <div className="transport-progress-row">
-        <input
-          type="range"
-          min={0}
-          max={Math.max(1, durationMs)}
-          value={Math.min(playheadMs, durationMs)}
-          onChange={(e) => setPlayhead(Number(e.target.value))}
-          className="transport-progress"
-          title="播放進度"
-        />
-      </div>
+      <div className="timeline-editor-body">
+        <div className="timeline-editor-main">
+          <div className="transport-progress-row">
+            <input
+              type="range"
+              min={0}
+              max={Math.max(1, durationMs)}
+              value={Math.min(playheadMs, durationMs)}
+              onChange={(e) => setPlayhead(Number(e.target.value))}
+              className="transport-progress"
+              title="播放進度"
+            />
+          </div>
 
-      <input
-        type="range"
-        min={0}
-        max={Math.max(0, durationMs - 1000)}
-        value={scrollMs}
-        onChange={(e) => setScrollMs(Number(e.target.value))}
-        className="timeline-scrubber"
-        title="Timeline 水平捲動"
-      />
+          <input
+            type="range"
+            min={0}
+            max={Math.max(0, durationMs - 1000)}
+            value={scrollMs}
+            onChange={(e) => setScrollMs(Number(e.target.value))}
+            className="timeline-scrubber"
+            title="Timeline 水平捲動"
+          />
 
-      <div className="timeline-workspace" ref={workspaceRef}>
-        <TimelineCanvas
-          durationMs={durationMs}
-          bpm={project.project.bpm}
-          parts={role.parts}
-          events={role.events}
-          colors={project.colors}
-          scrollMs={scrollMs}
-          zoomPxPerMs={zoomPxPerMs}
-          snapTime={snapTime}
-          playheadMs={playheadMs}
-          selectedId={selectedId}
-          waveformPeaks={waveformPeaks}
-          keyframes={role.keyframes}
-          onSelect={setSelectedId}
-          onEventsChange={setEvents}
-          onPlayheadChange={setPlayhead}
-          onKeyframesChange={setKeyframes}
-          onZoomAt={handleZoomAt}
-        />
+          <div className="timeline-workspace" ref={workspaceRef}>
+            <TimelineCanvas
+              durationMs={durationMs}
+              bpm={project.project.bpm}
+              parts={role.parts}
+              events={role.events}
+              colors={project.colors}
+              scrollMs={scrollMs}
+              zoomPxPerMs={zoomPxPerMs}
+              snapTime={snapTime}
+              playheadMs={playheadMs}
+              selectedId={selectedId}
+              waveformPeaks={waveformPeaks}
+              keyframes={role.keyframes}
+              onSelect={setSelectedId}
+              onEventsChange={setEvents}
+              onPlayheadChange={setPlayhead}
+              onKeyframesChange={setKeyframes}
+              onZoomAt={handleZoomAt}
+            />
+          </div>
+        </div>
+
+        {previewOpen && (
+          <DancerPreviewPanel
+            project={project}
+            playheadMs={playheadMs}
+            activeRoleId={role.role_id}
+            onClose={() => setPreviewOpen(false)}
+          />
+        )}
       </div>
 
       {selected ? (
