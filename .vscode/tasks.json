@@ -1,0 +1,34 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "PlatformIO: Build",
+      "type": "shell",
+      "command": "pio run",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PATH": "${env:HOME}/Library/Python/3.9/bin:${env:PATH}"
+        }
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": "$platformio"
+    },
+    {
+      "label": "PlatformIO: Upload",
+      "type": "shell",
+      "command": "pio run -t upload",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PATH": "${env:HOME}/Library/Python/3.9/bin:${env:PATH}"
+        }
+      },
+      "group": "none",
+      "problemMatcher": "$platformio"
+    }
+  ]
+}

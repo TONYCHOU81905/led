@@ -1,0 +1,16 @@
+import { resolve } from 'node:path'
+import { defineConfig } from 'vitest/config'
+
+export default defineConfig({
+  resolve: {
+    alias: {
+      '@shared': resolve(__dirname, 'src/shared')
+    }
+  },
+  test: {
+    include: ['tests/**/*.test.ts', 'tests/**/*.test.tsx', 'src/**/*.test.ts'],
+    environment: 'node',
+    environmentMatchGlobs: [['tests/ui/**', 'jsdom']],
+    setupFiles: ['tests/ui/setup.ts']
+  }
+})

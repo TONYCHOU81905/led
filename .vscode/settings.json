@@ -1,0 +1,8 @@
+{
+  "C_Cpp.default.configurationProvider": "platformio.platformio-ide",
+  "C_Cpp.intelliSenseEngine": "default",
+  "platformio-ide.customPATH": "${env:HOME}/Library/Python/3.9/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+  "files.associations": {
+    "*.ino": "cpp"
+  }
+}

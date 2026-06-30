@@ -1,0 +1,11 @@
+.pio
+.vscode/.browse.c_cpp.db*
+.vscode/ipch
+.vscode/vsix
+compile_commands.json
+
+# LED Show Studio
+led-studio/node_modules/
+led-studio/out/
+led-studio/dist/
+led-studio/release/

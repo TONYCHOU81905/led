@@ -1,0 +1,174 @@
+{
+  "schema_version": "1.0.0",
+  "project": {
+    "id": "demo_show_2026",
+    "name": "Demo Show 2026",
+    "music_file": "demo_track.wav",
+    "music_duration_ms": 180000,
+    "bpm": 128,
+    "created_at": "2026-06-29T00:00:00+08:00",
+    "updated_at": "2026-06-29T00:00:00+08:00"
+  },
+  "colors": {
+    "electric_cyan": { "r": 0, "g": 245, "b": 255 },
+    "hot_magenta": { "r": 255, "g": 0, "b": 128 },
+    "laser_lime": { "r": 57, "g": 255, "b": 20 },
+    "royal_violet": { "r": 139, "g": 0, "b": 255 },
+    "golden_spark": { "r": 255, "g": 215, "b": 0 },
+    "flame_orange": { "r": 255, "g": 69, "b": 0 },
+    "ice_blue": { "r": 79, "g": 195, "b": 247 },
+    "neon_pink": { "r": 255, "g": 20, "b": 147 },
+    "emerald_glow": { "r": 0, "g": 200, "b": 150 },
+    "ultraviolet": { "r": 106, "g": 13, "b": 173 },
+    "silver_white": { "r": 240, "g": 240, "b": 255 },
+    "deep_crimson": { "r": 220, "g": 20, "b": 60 },
+    "red": { "r": 255, "g": 0, "b": 0 },
+    "green": { "r": 0, "g": 255, "b": 0 },
+    "blue": { "r": 0, "g": 0, "b": 255 },
+    "white": { "r": 255, "g": 255, "b": 255 },
+    "black": { "r": 0, "g": 0, "b": 0 },
+    "off": { "r": 0, "g": 0, "b": 0 }
+  },
+  "roles": [
+    {
+      "role_id": "dancer_a",
+      "display_name": "Dancer A",
+      "parts": [
+        { "id": "hand", "display_name": "Hand", "ranges": [{ "start": 0, "end": 29 }] },
+        { "id": "foot", "display_name": "Foot", "ranges": [{ "start": 30, "end": 59 }] },
+        { "id": "head", "display_name": "Head", "ranges": [{ "start": 60, "end": 89 }] },
+        { "id": "body", "display_name": "Body", "ranges": [{ "start": 90, "end": 119 }] }
+      ],
+      "events": [
+        {
+          "id": "evt_a_001",
+          "from": "00:00",
+          "to": "00:30",
+          "targets": ["hand"],
+          "color": "electric_cyan",
+          "effect": "solid",
+          "priority": 10
+        },
+        {
+          "id": "evt_a_002",
+          "from": "00:00",
+          "to": "00:30",
+          "targets": ["foot"],
+          "color": "hot_magenta",
+          "effect": "solid",
+          "priority": 10
+        },
+        {
+          "id": "evt_a_003",
+          "from": "00:30",
+          "to": "01:00",
+          "targets": ["head", "body"],
+          "color": "laser_lime",
+          "effect": "blink",
+          "params": { "frequency_hz": 2, "duty": 0.5 },
+          "priority": 20
+        }
+      ]
+    },
+    {
+      "role_id": "dancer_b",
+      "display_name": "Dancer B",
+      "parts": [
+        { "id": "hand", "display_name": "Hand", "ranges": [{ "start": 0, "end": 29 }] },
+        { "id": "foot", "display_name": "Foot", "ranges": [{ "start": 30, "end": 59 }] },
+        { "id": "head", "display_name": "Head", "ranges": [{ "start": 60, "end": 89 }] },
+        { "id": "body", "display_name": "Body", "ranges": [{ "start": 90, "end": 119 }] }
+      ],
+      "events": [
+        {
+          "id": "evt_b_001",
+          "from": "00:10",
+          "to": "00:40",
+          "targets": ["body"],
+          "color": "royal_violet",
+          "effect": "solid",
+          "priority": 10
+        },
+        {
+          "id": "evt_b_002",
+          "from": "00:40",
+          "to": "01:10",
+          "targets": ["hand", "foot"],
+          "color": "golden_spark",
+          "effect": "solid",
+          "priority": 15
+        }
+      ]
+    },
+    {
+      "role_id": "dancer_c",
+      "display_name": "Dancer C",
+      "parts": [
+        { "id": "hand", "display_name": "Hand", "ranges": [{ "start": 0, "end": 29 }] },
+        { "id": "foot", "display_name": "Foot", "ranges": [{ "start": 30, "end": 59 }] },
+        { "id": "head", "display_name": "Head", "ranges": [{ "start": 60, "end": 89 }] },
+        { "id": "body", "display_name": "Body", "ranges": [{ "start": 90, "end": 119 }] }
+      ],
+      "events": [
+        {
+          "id": "evt_c_001",
+          "from": "00:05",
+          "to": "00:35",
+          "targets": ["head"],
+          "color": "flame_orange",
+          "effect": "solid",
+          "priority": 10
+        },
+        {
+          "id": "evt_c_002",
+          "from": "00:35",
+          "to": "01:05",
+          "targets": ["foot"],
+          "color": "ice_blue",
+          "effect": "blink",
+          "params": { "frequency_hz": 4, "duty": 0.35 },
+          "priority": 20
+        }
+      ]
+    },
+    {
+      "role_id": "dancer_d",
+      "display_name": "Dancer D",
+      "parts": [
+        { "id": "hand", "display_name": "Hand", "ranges": [{ "start": 0, "end": 29 }] },
+        { "id": "foot", "display_name": "Foot", "ranges": [{ "start": 30, "end": 59 }] },
+        { "id": "head", "display_name": "Head", "ranges": [{ "start": 60, "end": 89 }] },
+        { "id": "body", "display_name": "Body", "ranges": [{ "start": 90, "end": 119 }] }
+      ],
+      "events": [
+        {
+          "id": "evt_d_001",
+          "from": "00:15",
+          "to": "00:45",
+          "targets": ["hand"],
+          "color": "neon_pink",
+          "effect": "solid",
+          "priority": 10
+        },
+        {
+          "id": "evt_d_002",
+          "from": "00:45",
+          "to": "01:15",
+          "targets": ["body", "head"],
+          "color": "emerald_glow",
+          "effect": "solid",
+          "priority": 10
+        },
+        {
+          "id": "evt_d_003",
+          "from": "01:15",
+          "to": "01:45",
+          "targets": ["foot"],
+          "color": "deep_crimson",
+          "effect": "solid",
+          "priority": 25
+        }
+      ]
+    }
+  ]
+}

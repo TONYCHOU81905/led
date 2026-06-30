@@ -1,0 +1,10 @@
+{
+  "recommendations": [
+    "platformio.platformio-ide",
+    "ms-vscode.cpptools"
+  ],
+  "unwantedRecommendations": [
+    "llvm-vs-code-extensions.vscode-clangd",
+    "davidgomes.platformio-ide-cursor"
+  ]
+}

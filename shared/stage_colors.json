@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0.0",
+  "description": "Canonical stage palette — synced with ESP firmware (default_config.h) and led-studio (stageColors.ts)",
+  "colors": {
+    "electric_cyan": { "r": 0, "g": 245, "b": 255, "label_zh": "電光青", "use": "主視覺、科技感開場" },
+    "hot_magenta": { "r": 255, "g": 0, "b": 128, "label_zh": "熱力洋紅", "use": "強烈情緒、女舞者高光" },
+    "laser_lime": { "r": 57, "g": 255, "b": 20, "label_zh": "雷射萊姆", "use": "高能量、街舞節拍" },
+    "royal_violet": { "r": 139, "g": 0, "b": 255, "label_zh": "皇家紫", "use": "神秘段落、慢板鋪陳" },
+    "golden_spark": { "r": 255, "g": 215, "b": 0, "label_zh": "金耀", "use": "高潮、頒獎感結尾" },
+    "flame_orange": { "r": 255, "g": 69, "b": 0, "label_zh": "火焰橙", "use": "爆點、快節奏轉折" },
+    "ice_blue": { "r": 79, "g": 195, "b": 247, "label_zh": "冰藍", "use": "冷調對比、空靈段落" },
+    "neon_pink": { "r": 255, "g": 20, "b": 147, "label_zh": "霓虹粉", "use": "流行舞曲、年輕感" },
+    "emerald_glow": { "r": 0, "g": 200, "b": 150, "label_zh": "翡翠光", "use": "自然系、療癒過渡" },
+    "ultraviolet": { "r": 106, "g": 13, "b": 173, "label_zh": "紫外光", "use": "UV 黑光場景、深層對比" },
+    "silver_white": { "r": 240, "g": 240, "b": 255, "label_zh": "銀白", "use": "全場閃光、結尾收束" },
+    "deep_crimson": { "r": 220, "g": 20, "b": 60, "label_zh": "深緋紅", "use": "戲劇張力、獨舞" },
+    "red": { "r": 255, "g": 0, "b": 0, "label_zh": "純紅", "use": "警示、強調" },
+    "green": { "r": 0, "g": 255, "b": 0, "label_zh": "純綠", "use": "對位、測試" },
+    "blue": { "r": 0, "g": 0, "b": 255, "label_zh": "純藍", "use": "對位、測試" },
+    "yellow": { "r": 255, "g": 255, "b": 0, "label_zh": "純黃", "use": "暖場、警示" },
+    "purple": { "r": 128, "g": 0, "b": 255, "label_zh": "紫", "use": "通用紫色" },
+    "white": { "r": 255, "g": 255, "b": 255, "label_zh": "白", "use": "全亮閃光（注意電流）" },
+    "off": { "r": 0, "g": 0, "b": 0, "label_zh": "關", "use": "熄滅" }
+  }
+}
