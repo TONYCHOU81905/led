@@ -2,9 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { LedProject, RoleDefinition, TimelineEventUI, TimelineKeyframe } from '../../shared/types/project'
 import { formatMsToTime, parseTimeToMs } from '../../shared/timeParse'
 import { deleteEvent, newEventId, updateEvent } from '../../shared/projectMutations'
+import { clipFromEvent, pasteClip, type TimelineClipClipboard } from '../../shared/timelineClipboard'
 import { compileProjectRole, configChecksum } from '../../shared/configCompiler'
 import { defaultCompileOptions, deviceConfigFilename } from '../../shared/deviceConfigDefaults'
 import { loadMusicFromPath } from './audioAnalysis'
+import { CopyTimelineControl } from './CopyTimelineControl'
 import { DancerPreviewPanel } from '../preview/DancerPreviewPanel'
 import { EventInspector } from './EventInspector'
 import { TimelineCanvas } from './TimelineCanvas'
@@ -46,11 +48,14 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
   const [configNotice, setConfigNotice] = useState<string | null>(null)
   const [configError, setConfigError] = useState<string | null>(null)
   const [previewOpen, setPreviewOpen] = useState(false)
+  const [copyNotice, setCopyNotice] = useState<string | null>(null)
+  const [copyError, setCopyError] = useState<string | null>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
   const objectUrlRef = useRef<string | null>(null)
   const playheadRafRef = useRef<number>(0)
   const workspaceRef = useRef<HTMLDivElement>(null)
   const zoomRef = useRef(zoomPxPerMs)
+  const clipClipboardRef = useRef<TimelineClipClipboard | null>(null)
   zoomRef.current = zoomPxPerMs
 
   const selected = useMemo(
@@ -193,7 +198,33 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
       const tag = (e.target as HTMLElement).tagName
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return
 
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd') {
+      const mod = e.metaKey || e.ctrlKey
+      const key = e.key.toLowerCase()
+
+      if (mod && key === 'c') {
+        if (!selectedId) return
+        const source = role.events.find((ev) => ev.id === selectedId)
+        if (!source) return
+        e.preventDefault()
+        clipClipboardRef.current = clipFromEvent(source)
+        setCopyError(null)
+        setCopyNotice(`已複製 clip（${source.from} → ${source.to}）`)
+        return
+      }
+
+      if (mod && key === 'v') {
+        const clip = clipClipboardRef.current
+        if (!clip) return
+        e.preventDefault()
+        const pasted = pasteClip(clip, playheadMs, durationMs, snapTime)
+        setEvents([...role.events, pasted])
+        setSelectedId(pasted.id)
+        setCopyError(null)
+        setCopyNotice(`已貼上 clip 於 ${pasted.from}`)
+        return
+      }
+
+      if (mod && key === 'd') {
         if (!selectedId) return
         const source = role.events.find((ev) => ev.id === selectedId)
         if (!source) return
@@ -218,7 +249,17 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [selectedId, project, role.role_id, role.events, onProjectChange, project.project.bpm])
+  }, [
+    selectedId,
+    project,
+    role.role_id,
+    role.events,
+    onProjectChange,
+    project.project.bpm,
+    playheadMs,
+    durationMs,
+    snapTime
+  ])
 
   const patchSelected = (patch: Partial<TimelineEventUI>) => {
     if (!selectedId) return
@@ -383,12 +424,29 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
         </div>
       </div>
 
-      {(configNotice || configError) && (
+      {(configNotice || configError || copyNotice || copyError) && (
         <div className="timeline-config-banner">
           {configNotice && <p className="notice-banner">{configNotice}</p>}
           {configError && <p className="error-banner">{configError}</p>}
+          {copyNotice && <p className="notice-banner">{copyNotice}</p>}
+          {copyError && <p className="error-banner">{copyError}</p>}
         </div>
       )}
+
+      <CopyTimelineControl
+        project={project}
+        targetRole={role}
+        selectedEventId={selectedId}
+        onProjectChange={onProjectChange}
+        onCopied={(message) => {
+          setCopyError(null)
+          setCopyNotice(message)
+        }}
+        onError={(message) => {
+          setCopyNotice(null)
+          setCopyError(message)
+        }}
+      />
 
       <div className="timeline-editor-body">
         <div className="timeline-editor-main">
@@ -460,7 +518,7 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
           <div className="inspector-header">
             <h3>Clip 屬性</h3>
           </div>
-          <p>選取 clip 後可編輯部位、時間、顏色。空白軌道拖曳建立 · 右上角 + Clip · 波形右鍵新增/移除關鍵幀。</p>
+          <p>選取 clip 後可編輯部位、時間、顏色。空白軌道拖曳建立 · ⌘/Ctrl+C 複製 · ⌘/Ctrl+V 於 playhead 貼上 · ⌘/Ctrl+D 複製並偏移一拍。</p>
         </aside>
       )}
     </div>

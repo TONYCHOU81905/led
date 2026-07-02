@@ -43,7 +43,7 @@ export function CalibrationPage() {
 
       <div className="actions">
         <Link to="/show" className="btn btn-primary">
-          前往 Show Control
+          前往音樂控制
         </Link>
         <Link to="/devices" className="btn">
           Device Manager

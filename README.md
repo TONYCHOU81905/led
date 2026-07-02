@@ -47,6 +47,18 @@ pio run -t upload                # 燒錄（接 USB）
 pio device monitor               # Serial 115200
 ```
 
+**查看 ESP32 log（Serial monitor）：**
+
+```bash
+# 列出所有 Serial port（接 USB 前後各跑一次，多出來的就是 ESP）
+ls /dev/cu.*
+
+# 開啟 Serial monitor（115200 baud）
+~/.platformio/penv/bin/pio device monitor -p /dev/cu.wchusbserial10 -b 115200
+
+# 離開：Ctrl+C
+```
+
 **LED 硬體**
 
 | 項目 | 預設 | 調整方式 |
@@ -90,7 +102,7 @@ npm run dist:mac  # 或 dist:win 打包
 | Timeline | `/timeline` | Canvas 多軌、Snap、Inspector、音檔預覽 |
 | LED 串聯 | `/led-chain` | 6 部位 index range（預設 120 LED） |
 | Devices | `/devices` | esptool 燒錄、Serial config、WiFi NVS |
-| Show Control | `/show` | UDP Bridge、LTC sidecar |
+| Show Control | `/show` | 音樂控制：播放音檔 + UDP Bridge |
 
 **Device Manager 流程**
 
@@ -110,7 +122,7 @@ python3 tools/ltc_sidecar.py --simulate --duration-ms 180000
 
 1. ESP 與電腦連同一 Wi-Fi（或電腦開 2.4 GHz 熱點）
 2. Device Manager 寫入 WiFi，或暫改 `src/default_config.h`
-3. Studio → Show Control → **Start Bridge**
+3. Studio → **音樂控制** → **播放**
 4. ESP 收到 timecode 進入 PLAYING，依 config timeline 亮燈
 
 開機狀態燈：藍（BOOT）→ 橘呼吸（連 WiFi）→ 滅（等 timecode）。

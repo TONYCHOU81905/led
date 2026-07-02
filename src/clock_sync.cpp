@@ -1,6 +1,7 @@
 #include "clock_sync.h"
 #include <Arduino.h>
 #include <math.h>
+#include "time_format.h"
 
 void ClockSync::reset() {
   _synced = false;
@@ -28,7 +29,9 @@ void ClockSync::applySmoothCorrection(int32_t error_ms) {
 void ClockSync::onStart(uint32_t music_time_ms, int64_t now_us) {
   applyHardSeek(music_time_ms, now_us);
   _playing = true;
-  Serial.printf("[sync] START music_ms=%u\n", music_time_ms);
+  char show[16];
+  formatShowTimeMmSs(music_time_ms, show, sizeof(show));
+  Serial.printf("[sync] START show=%s\n", show);
 }
 
 void ClockSync::onRunning(uint32_t music_time_ms, int64_t now_us) {
@@ -45,7 +48,9 @@ void ClockSync::onRunning(uint32_t music_time_ms, int64_t now_us) {
   _last_error_ms = error_ms;
 
   if (abs(error_ms) > SYNC_SMOOTH_THRESHOLD_MS) {
-    Serial.printf("[sync] hard seek error=%d ms\n", error_ms);
+    char show[16];
+    formatShowTimeMmSs(music_time_ms, show, sizeof(show));
+    Serial.printf("[sync] hard seek error=%d ms show=%s\n", error_ms, show);
     applyHardSeek(music_time_ms, now_us);
   } else if (error_ms != 0) {
     applySmoothCorrection(error_ms);
@@ -55,13 +60,17 @@ void ClockSync::onRunning(uint32_t music_time_ms, int64_t now_us) {
 void ClockSync::onSeek(uint32_t music_time_ms, int64_t now_us) {
   applyHardSeek(music_time_ms, now_us);
   _playing = true;
-  Serial.printf("[sync] SEEK music_ms=%u\n", music_time_ms);
+  char show[16];
+  formatShowTimeMmSs(music_time_ms, show, sizeof(show));
+  Serial.printf("[sync] SEEK show=%s\n", show);
 }
 
-void ClockSync::onPause(int64_t now_us) {
+void ClockSync::onPause(uint32_t music_time_ms, int64_t now_us) {
   (void)now_us;
   _playing = false;
-  Serial.println("[sync] PAUSE");
+  char show[16];
+  formatShowTimeMmSs(music_time_ms, show, sizeof(show));
+  Serial.printf("[sync] PAUSE show=%s\n", show);
 }
 
 void ClockSync::onStop() {

@@ -1,3 +1,5 @@
+import type { FlashBoardId } from './boardTargets'
+
 export type PartId = 'hand' | 'foot' | 'head' | 'body' | string
 
 export type EffectId = 'solid' | 'off' | 'blink' | 'fade_in' | 'fade_out' | 'fade'
@@ -116,6 +118,7 @@ export interface BridgeOptions {
   showIdCrc32?: number
   configCrc32?: number
   broadcastAddress?: string
+  unicastTargets?: string[]
   port?: number
 }
 
@@ -126,11 +129,15 @@ export interface BridgeState {
   musicTimeMs: number
   sequence: number
   packetsPerSecond: number
+  broadcastTargets?: string[]
+  unicastTargets?: string[]
   startedAt?: number
 }
 
 export interface EspDeviceStatus {
   device_id: string
+  ip?: string
+  online?: boolean
   role_id?: string
   sync_state?: string
   music_time_ms?: number
@@ -159,6 +166,7 @@ export interface SaveProjectResult {
   project?: LedProject
 }
 
+
 export interface LedStudioApi {
   project: {
     openDemo(): Promise<LedProject>
@@ -177,12 +185,17 @@ export interface LedStudioApi {
     bridgePause(): Promise<void>
     bridgeResume(): Promise<void>
     bridgeSeek(musicTimeMs: number): Promise<void>
+    bridgePreviewTime(musicTimeMs: number): Promise<void>
     bridgeGetState(): Promise<BridgeState>
+    bridgeTargetList(): Promise<string[]>
+    bridgeTargetAdd(ip: string): Promise<string[]>
+    bridgeTargetRemove(ip: string): Promise<string[]>
     ltcStart(options?: { wavPath?: string; durationMs?: number }): Promise<void>
     ltcStop(): Promise<void>
     onBridgeState(cb: (state: BridgeState) => void): () => void
     onEspStatus(cb: (devices: EspDeviceStatus[]) => void): () => void
     espStatusList(): Promise<EspDeviceStatus[]>
+    discoverDevices(): Promise<void>
   }
   device: {
     listPorts(): Promise<Array<{ path: string; manufacturer?: string }>>
@@ -191,7 +204,7 @@ export interface LedStudioApi {
     uploadConfig(port: string, config: Record<string, unknown>): Promise<{ ok: boolean; crc32?: number; events?: number; flash_saved?: boolean }>
     reloadConfig(port: string): Promise<{ ok: boolean; crc32?: number; events?: number }>
     getStatus(port: string): Promise<Record<string, unknown>>
-    flashFirmware(port: string, onProgress: (p: { stage: string; message: string }) => void): Promise<void>
+    flashFirmware(port: string, boardId: FlashBoardId, onProgress: (p: { stage: string; message: string }) => void): Promise<void>
   }
 }
 

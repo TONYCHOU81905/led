@@ -202,32 +202,33 @@ describe('LED Show Studio UI flows (simulated clicks)', () => {
     expect(pingBtn).not.toBeDisabled()
   })
 
-  it('Show Control: Start / Stop Bridge', async () => {
+  it('音樂控制: 播放 / 停止 Bridge', async () => {
     const user = userEvent.setup()
     const mock = getMockApi()
     render(<App />)
 
-    await user.click(sidebarLink('Show Control'))
-    expect(screen.getByRole('heading', { name: 'Show Control' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '載入範例專案' }))
+    await waitFor(() => expect(useProjectStore.getState().project?.project.music_file).toBeTruthy())
 
-    const startBtn = screen.getByRole('button', { name: 'Start Bridge' })
-    await user.click(startBtn)
-    await waitFor(() => expect(mock.api.show.bridgeStart).toHaveBeenCalled())
+    await user.click(sidebarLink('音樂控制'))
+    expect(screen.getByRole('heading', { name: '音樂控制' })).toBeInTheDocument()
 
-    mock.emitBridgeState({ running: true, musicTimeMs: 5000, sequence: 10, packetsPerSecond: 50 })
+    const playBtn = screen.getByRole('button', { name: '播放' })
+    await user.click(playBtn)
+    await waitFor(() => expect(mock.api.show.bridgeStart).toHaveBeenCalledWith({ source: 'preview' }))
+
+    mock.emitBridgeState({ running: true, musicTimeMs: 5000, sequence: 10, packetsPerSecond: 50, source: 'preview' })
     await waitFor(() => expect(screen.getByText('RUNNING')).toBeInTheDocument())
 
-    await user.click(screen.getByRole('button', { name: 'Stop Bridge' }))
+    await user.click(screen.getByRole('button', { name: '停止' }))
     expect(mock.api.show.bridgeStop).toHaveBeenCalled()
   })
 
-  it('Show Control: LTC Sidecar 測試', async () => {
+  it('音樂控制: 頁面可達', async () => {
     const user = userEvent.setup()
-    const mock = getMockApi()
     render(<App />)
-    await user.click(sidebarLink('Show Control'))
-    await user.click(screen.getByRole('button', { name: 'LTC Sidecar 測試' }))
-    expect(mock.api.show.ltcStart).toHaveBeenCalled()
+    await user.click(sidebarLink('音樂控制'))
+    expect(screen.getByLabelText('音樂播放控制')).toBeInTheDocument()
   })
 
   it('LED 串聯: 預設 6 節點可編輯', async () => {
@@ -264,7 +265,7 @@ describe('LED Show Studio UI flows (simulated clicks)', () => {
     render(<App />)
     await createProjectViaUi(user)
 
-    const links = ['Dashboard', '舞者 CRUD', 'Timeline', 'LED 串聯', 'Devices', 'Show Control'] as const
+    const links = ['Dashboard', '舞者 CRUD', 'Timeline', 'LED 串聯', 'Devices', '音樂控制'] as const
     for (const name of links) {
       await user.click(sidebarLink(name))
       expect(document.querySelector('.content')).toBeTruthy()

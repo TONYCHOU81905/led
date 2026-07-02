@@ -105,7 +105,7 @@ export function DashboardPage() {
               Devices
             </Link>
             <Link to="/show" className="btn btn-primary">
-              Show Control
+              音樂控制
             </Link>
           </div>
         </>

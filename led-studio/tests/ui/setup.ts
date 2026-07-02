@@ -44,6 +44,10 @@ beforeEach(() => {
   window.history.pushState({}, '', '/')
   globalThis.ResizeObserver = ResizeObserverMock as unknown as typeof ResizeObserver
   mockCanvas2d()
+
+  // jsdom does not implement URL.createObjectURL / revokeObjectURL
+  globalThis.URL.createObjectURL = vi.fn((_blob: Blob) => `blob:mock/${Math.random()}`)
+  globalThis.URL.revokeObjectURL = vi.fn()
   globalThis.__mockApi = createMockApi()
   window.api = globalThis.__mockApi.api
 
@@ -56,7 +60,8 @@ beforeEach(() => {
       musicTimeMs: 0,
       sequence: 0,
       packetsPerSecond: 0
-    }
+    },
+    playbackMs: 0
   })
 })
 

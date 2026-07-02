@@ -17,6 +17,7 @@ import { timecodeBridge } from './services/timecodeBridge'
 import { loadOrBuildWaveformCache } from './services/waveformCache'
 import { resolveAppResource } from './utils/paths'
 import { openProjectFromFile, readProjectFile, saveProjectToFile } from './services/projectBundle'
+import type { FlashBoardId } from '../src/shared/boardTargets'
 import type { BridgeOptions, DeviceConfig, LedProject } from '../src/shared/types/project'
 
 export interface OpenProjectResult {
@@ -30,6 +31,44 @@ export interface SaveProjectResult {
   project?: LedProject
 }
 
+const knownBridgeTargets = new Set<string>()
+
+function normalizeIpv4(ip: string): string | null {
+  const trimmed = ip.trim()
+  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(trimmed)) return null
+  const parts = trimmed.split('.').map(Number)
+  if (parts.some((part) => part < 0 || part > 255)) return null
+  return trimmed
+}
+
+function isUsableBridgeTargetIp(ip: string): boolean {
+  if (ip === '0.0.0.0' || ip === '255.255.255.255') return false
+  return true
+}
+
+function registerBridgeTarget(ip?: string): void {
+  if (!ip) return
+  const normalized = normalizeIpv4(ip)
+  if (!normalized || !isUsableBridgeTargetIp(normalized)) return
+  knownBridgeTargets.add(normalized)
+}
+
+function removeBridgeTarget(ip: string): string[] {
+  const normalized = normalizeIpv4(ip)
+  if (normalized) {
+    knownBridgeTargets.delete(normalized)
+  }
+  return listBridgeTargets()
+}
+
+function listBridgeTargets(): string[] {
+  return [...knownBridgeTargets].filter(isUsableBridgeTargetIp).sort()
+}
+
+function syncDiscoveryTargets(): void {
+  espStatusListener.setDiscoveryTargets(listBridgeTargets())
+}
+
 function pushBridgeState(): void {
   const state = timecodeBridge.getState()
   for (const win of BrowserWindow.getAllWindows()) {
@@ -38,6 +77,10 @@ function pushBridgeState(): void {
 }
 
 function pushEspStatus(devices: EspDeviceStatus[]): void {
+  for (const device of devices) {
+    registerBridgeTarget(device.ip)
+  }
+  syncDiscoveryTargets()
   for (const win of BrowserWindow.getAllWindows()) {
     win.webContents.send('show:espStatus', devices)
   }
@@ -63,7 +106,16 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  // Drop invalid targets left from earlier sessions (e.g. wifi_ip 0.0.0.0 via serial).
+  for (const ip of [...knownBridgeTargets]) {
+    if (!isUsableBridgeTargetIp(ip)) knownBridgeTargets.delete(ip)
+  }
+
   timecodeBridge.subscribe(pushBridgeState)
+  espStatusListener.setDeviceIpHandler((ip) => {
+    registerBridgeTarget(ip)
+    syncDiscoveryTargets()
+  })
   espStatusListener.subscribe(pushEspStatus)
   espStatusListener.start(4211)
 
@@ -171,7 +223,13 @@ app.whenReady().then(() => {
     if (options?.source === 'ltc') {
       ltcSidecar.start({ simulate: true, durationMs: 180000 })
     }
-    timecodeBridge.start(options)
+    for (const device of espStatusListener.listDevices()) {
+      registerBridgeTarget(device.ip)
+    }
+    timecodeBridge.start({
+      ...options,
+      unicastTargets: [...new Set([...(options?.unicastTargets ?? []), ...listBridgeTargets()])]
+    })
     pushBridgeState()
   })
 
@@ -196,9 +254,29 @@ app.whenReady().then(() => {
     pushBridgeState()
   })
 
+  ipcMain.handle('show:bridgePreviewTime', async (_event, musicTimeMs: number) => {
+    timecodeBridge.setExternalTimeMs(musicTimeMs)
+    pushBridgeState()
+  })
+
   ipcMain.handle('show:bridgeGetState', async () => timecodeBridge.getState())
+  ipcMain.handle('show:bridgeTargetList', async () => listBridgeTargets())
+  ipcMain.handle('show:bridgeTargetAdd', async (_event, ip: string) => {
+    registerBridgeTarget(ip)
+    syncDiscoveryTargets()
+    return listBridgeTargets()
+  })
+  ipcMain.handle('show:bridgeTargetRemove', async (_event, ip: string) => {
+    const targets = removeBridgeTarget(ip)
+    syncDiscoveryTargets()
+    return targets
+  })
 
   ipcMain.handle('show:espStatusList', async () => espStatusListener.listDevices())
+
+  ipcMain.handle('show:discoverDevices', async () => {
+    await espStatusListener.discoverDevices()
+  })
 
   ipcMain.handle('show:ltcStart', async (_event, options?: { wavPath?: string; durationMs?: number }) => {
     ltcSidecar.start({ wavPath: options?.wavPath, simulate: !options?.wavPath, durationMs: options?.durationMs })
@@ -222,7 +300,13 @@ app.whenReady().then(() => {
 
   ipcMain.handle('device:reloadConfig', async (_event, port: string) => reloadEspConfig(port))
 
-  ipcMain.handle('device:getStatus', async (_event, port: string) => getEspStatus(port))
+  ipcMain.handle('device:getStatus', async (_event, port: string) => {
+    const status = await getEspStatus(port)
+    const wifiIp = typeof status.wifi_ip === 'string' ? status.wifi_ip : undefined
+    registerBridgeTarget(wifiIp)
+    syncDiscoveryTargets()
+    return status
+  })
 
   ipcMain.handle(
     'project:loadWaveformCache',
@@ -234,8 +318,8 @@ app.whenReady().then(() => {
     }
   )
 
-  ipcMain.handle('device:flashFirmware', async (event, port: string) => {
-    await flashFirmware(port, (progress) => {
+  ipcMain.handle('device:flashFirmware', async (event, port: string, boardId?: FlashBoardId) => {
+    await flashFirmware(port, boardId, (progress) => {
       event.sender.send('device:flashProgress', progress)
     })
   })

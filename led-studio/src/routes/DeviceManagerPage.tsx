@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { compileProjectRole, configChecksum } from '../shared/configCompiler'
+import {
+  FLASH_BOARD_TARGETS,
+  loadStoredFlashBoardId,
+  storeFlashBoardId,
+  type FlashBoardId
+} from '../shared/boardTargets'
 import { defaultCompileOptions } from '../shared/deviceConfigDefaults'
 import type { DeviceConfig } from '../shared/types/project'
 import { useProjectStore } from '../stores/projectStore'
@@ -38,6 +44,7 @@ export function DeviceManagerPage() {
   const [ledType, setLedType] = useState<'WS2811' | 'WS2812B'>('WS2811')
   const [loadedConfig, setLoadedConfig] = useState<DeviceConfig | null>(null)
   const [loadedConfigLabel, setLoadedConfigLabel] = useState<string | null>(null)
+  const [flashBoardId, setFlashBoardId] = useState<FlashBoardId>(() => loadStoredFlashBoardId())
   const [log, setLog] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
   const [portError, setPortError] = useState<string | null>(null)
@@ -148,6 +155,15 @@ export function DeviceManagerPage() {
     appendLog('已清除載入的 config，改從專案編譯')
   }
 
+  const flashBoard = FLASH_BOARD_TARGETS.find((b) => b.id === flashBoardId)!
+
+  const onFlashBoardChange = (id: FlashBoardId) => {
+    setFlashBoardId(id)
+    storeFlashBoardId(id)
+    const board = FLASH_BOARD_TARGETS.find((b) => b.id === id)
+    if (board) setDataGpio(board.defaultDataGpio)
+  }
+
   return (
     <section className="page device-manager-page">
       <header className="page-header">
@@ -186,6 +202,20 @@ export function DeviceManagerPage() {
             重新掃描
           </button>
         </div>
+
+        <label className="device-field">
+          <span className="device-field-label">燒錄板型</span>
+          <select
+            value={flashBoardId}
+            onChange={(e) => onFlashBoardChange(e.target.value as FlashBoardId)}
+          >
+            {FLASH_BOARD_TARGETS.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.label}
+              </option>
+            ))}
+          </select>
+        </label>
 
         <label className="device-field">
           <span className="device-field-label">角色（編譯來源）</span>
@@ -240,7 +270,11 @@ export function DeviceManagerPage() {
       </div>
 
       <p className="device-hint">
-        避免選到 <code>/dev/tty.debug-console</code> 或 <code>wlan-debug</code>。接上 ESP32 後按「重新掃描」，或手動輸入 macOS 埠名。
+        燒錄前請先在 repo 根目錄編譯對應韌體：<code>{flashBoard.buildHint}</code>
+        {flashBoard.maxEvents < 1024 ? (
+          <>（classic ESP32 韌體 timeline 上限 {flashBoard.maxEvents} events）</>
+        ) : null}
+        。避免選到 <code>/dev/tty.debug-console</code> 或 <code>wlan-debug</code>。接上 ESP32 後按「重新掃描」，或手動輸入 macOS 埠名。
         Config 上傳後寫入 ESP <strong>Flash (LittleFS)</strong>，重開機仍保留；WiFi 寫入 <strong>NVS</strong>。
       </p>
 
@@ -260,11 +294,31 @@ export function DeviceManagerPage() {
         </button>
         <button
           type="button"
+          className="btn"
+          disabled={busy || !effectivePort}
+          onClick={() =>
+            run('Read status', async () => {
+              const res = await window.api.device.getStatus(effectivePort)
+              appendLog(JSON.stringify(res))
+              const wifiIp = typeof res.wifi_ip === 'string' ? res.wifi_ip : ''
+              if (wifiIp && wifiIp !== '0.0.0.0') {
+                const targets = await window.api.show.bridgeTargetAdd(wifiIp)
+                appendLog(`已註冊 Show Control Unicast: ${wifiIp}（共 ${targets.length} 個 IP）`)
+              } else if (wifiIp === '0.0.0.0') {
+                appendLog('Wi-Fi 尚未連線（wifi_ip=0.0.0.0），無法註冊 Unicast IP')
+              }
+            })
+          }
+        >
+          讀取狀態 / 註冊 Show Control IP
+        </button>
+        <button
+          type="button"
           className="btn btn-primary"
           disabled={busy || !effectivePort}
           onClick={() =>
             run('Flash firmware', async () => {
-              await window.api.device.flashFirmware(effectivePort, (p) => appendLog(p.message))
+              await window.api.device.flashFirmware(effectivePort, flashBoardId, (p) => appendLog(p.message))
             })
           }
         >

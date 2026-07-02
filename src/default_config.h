@@ -1,12 +1,13 @@
 #pragma once
 
 #include <stdio.h>
+#include <string.h>
 #include "types.h"
 
 // Embedded demo device config — compiled timeline with start_ms/end_ms.
 // WiFi placeholders match spec §8.3; change before field use.
-inline DeviceConfig makeDefaultConfig() {
-  DeviceConfig cfg = {};
+inline void initDefaultConfig(DeviceConfig &cfg) {
+  memset(&cfg, 0, sizeof(cfg));
 
   snprintf(cfg.device_id, sizeof(cfg.device_id), "esp32s3_dancer_demo_001");
   snprintf(cfg.role_id, sizeof(cfg.role_id), "dancer_demo");
@@ -91,6 +92,4 @@ inline DeviceConfig makeDefaultConfig() {
   addEvent(3000, 4500, "hand", "golden_spark", EFFECT_FADE_OUT, 15);
   addEvent(4000, 6000, "foot", "flame_orange", EFFECT_SOLID, 10);
   addEvent(5000, 5500, "head", "deep_crimson", EFFECT_BLINK, 25, 12.0f, 0.4f);
-
-  return cfg;
 }

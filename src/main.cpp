@@ -7,6 +7,7 @@
 #include "sync_receiver.h"
 #include "timeline_engine.h"
 #include "wifi_manager.h"
+#include "time_format.h"
 
 static DeviceConfig g_config;
 static ConfigLoader g_config_loader;
@@ -21,6 +22,9 @@ static AppSyncState g_state = STATE_BOOT;
 
 static int64_t last_frame_us = 0;
 static bool g_timecode_blackout = false;
+static uint32_t g_last_wifi_retry_ms = 0;
+static uint32_t g_last_health_log_ms = 0;
+static bool g_wifi_was_connected = false;
 
 #ifndef TIMECODE_HOLD_MS
 #define TIMECODE_HOLD_MS 500
@@ -28,6 +32,59 @@ static bool g_timecode_blackout = false;
 #ifndef TIMECODE_BLACKOUT_MS
 #define TIMECODE_BLACKOUT_MS 2000
 #endif
+#ifndef WIFI_RETRY_INTERVAL_MS
+#define WIFI_RETRY_INTERVAL_MS 10000
+#endif
+#ifndef HEALTH_LOG_INTERVAL_MS
+#define HEALTH_LOG_INTERVAL_MS 5000
+#endif
+
+static const char *stateName(AppSyncState state) {
+  switch (state) {
+  case STATE_BOOT:
+    return "BOOT";
+  case STATE_WIFI_CONNECTING:
+    return "WIFI_CONNECTING";
+  case STATE_WAIT_TIMECODE:
+    return "WAIT_TIMECODE";
+  case STATE_PLAYING:
+    return "PLAYING";
+  case STATE_PAUSED:
+    return "PAUSED";
+  case STATE_STOPPED:
+    return "STOPPED";
+  default:
+    return "UNKNOWN";
+  }
+}
+
+static void startNetworkServices() {
+  g_sync_rx.begin(g_config.network.timecode_port);
+  g_status.begin(g_config.network.status_port);
+  g_state = STATE_WAIT_TIMECODE;
+  g_wifi_was_connected = true;
+  Serial.printf("[app] waiting for timecode on UDP %u\n",
+                g_config.network.timecode_port);
+}
+
+static void logHealth(uint32_t now_ms) {
+  const bool wifi_connected = g_wifi.isConnected();
+  const uint32_t last_pkt = g_sync_rx.lastPacketMs();
+  const uint32_t last_pkt_age =
+      last_pkt > 0 ? (now_ms - last_pkt) : 0;
+  const uint32_t show_ms =
+      g_clock.hasSync() ? g_clock.musicTimeMs(esp_timer_get_time()) : 0;
+  char show_time[16];
+  formatShowTimeMmSs(show_ms, show_time, sizeof(show_time));
+  Serial.printf(
+      "[health] state=%s show=%s wifi=%s ip=%s rssi=%d sync=%s playing=%s seq=%u "
+      "udp_rx=%u udp_drop=%u last_pkt_age_ms=%u\n",
+      stateName(g_state), show_time, wifi_connected ? "connected" : "disconnected",
+      wifi_connected ? WiFi.localIP().toString().c_str() : "-",
+      wifi_connected ? WiFi.RSSI() : 0, g_clock.hasSync() ? "yes" : "no",
+      g_clock.isPlaying() ? "yes" : "no", g_clock.lastSequence(),
+      g_sync_rx.packetsReceived(), g_sync_rx.packetsDropped(), last_pkt_age);
+}
 
 static void renderStateIndicator(uint32_t now_ms) {
   switch (g_state) {
@@ -84,10 +141,7 @@ void setup() {
   }
 
   if (g_wifi.isConnected()) {
-    g_sync_rx.begin(g_config.network.timecode_port);
-    g_status.begin(g_config.network.status_port);
-    g_state = STATE_WAIT_TIMECODE;
-    Serial.println("[app] waiting for timecode on UDP 4210");
+    startNetworkServices();
   }
 
   last_frame_us = esp_timer_get_time();
@@ -101,11 +155,10 @@ static void applySerialPendingAction(const SerialPendingAction &action) {
   if (action.network_changed) {
     g_state = STATE_WIFI_CONNECTING;
     if (g_wifi.reconnect(g_config.network)) {
-      g_sync_rx.begin(g_config.network.timecode_port);
-      g_status.begin(g_config.network.status_port);
-      g_state = STATE_WAIT_TIMECODE;
+      startNetworkServices();
       Serial.println("[app] WiFi reconnected after serial update");
     } else {
+      g_wifi_was_connected = false;
       Serial.println("[app] WiFi reconnect failed after serial update");
     }
   }
@@ -120,9 +173,35 @@ void loop() {
   applySerialPendingAction(g_serial.takePendingAction());
   g_status.tick(now_ms, g_config, g_state, g_clock, g_sync_rx);
 
-  if ((g_state == STATE_PLAYING || g_state == STATE_PAUSED) && g_clock.hasSync()) {
+  const bool wifi_connected = g_wifi.isConnected();
+  if (!wifi_connected) {
+    if (g_wifi_was_connected) {
+      g_wifi_was_connected = false;
+      g_state = STATE_WIFI_CONNECTING;
+      Serial.println("[wifi] disconnected; will retry");
+    }
+    if (now_ms - g_last_wifi_retry_ms >= WIFI_RETRY_INTERVAL_MS) {
+      g_last_wifi_retry_ms = now_ms;
+      Serial.printf("[wifi] retrying '%s'...\n", g_config.network.ssid);
+      if (g_wifi.reconnect(g_config.network)) {
+        startNetworkServices();
+        Serial.println("[wifi] reconnect OK");
+      } else {
+        Serial.println("[wifi] reconnect failed");
+      }
+    }
+  } else {
+    g_wifi_was_connected = true;
+  }
+
+  if (now_ms - g_last_health_log_ms >= HEALTH_LOG_INTERVAL_MS) {
+    g_last_health_log_ms = now_ms;
+    logHealth(now_ms);
+  }
+
+  if (g_state == STATE_PLAYING && g_clock.hasSync() && g_clock.isPlaying()) {
     const uint32_t last_pkt = g_sync_rx.lastPacketMs();
-    if (last_pkt > 0) {
+    if (last_pkt > 0 && now_ms >= last_pkt) {
       const uint32_t gap = now_ms - last_pkt;
       if (gap > TIMECODE_BLACKOUT_MS) {
         if (!g_timecode_blackout) {
@@ -135,6 +214,8 @@ void loop() {
       } else {
         g_timecode_blackout = false;
       }
+    } else {
+      g_timecode_blackout = false;
     }
   } else {
     g_timecode_blackout = false;

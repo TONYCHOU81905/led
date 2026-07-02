@@ -145,6 +145,17 @@ export function compileProjectRole(
   })
 }
 
+/**
+ * Serial config upload currently chunks JSON by string offsets inside another JSON
+ * envelope. Escaping all non-ASCII code units keeps byte length, offsets, and CRC
+ * aligned with what the ESP receives over serial.
+ */
+export function serializeConfigForTransport(config: DeviceConfig): string {
+  return JSON.stringify(config).replace(/[\u0080-\uffff]/g, (char) => {
+    return `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`
+  })
+}
+
 /** Simple CRC32 for config checksum (IEEE polynomial). */
 export function crc32(data: string): number {
   let crc = 0xffffffff
@@ -158,5 +169,5 @@ export function crc32(data: string): number {
 }
 
 export function configChecksum(config: DeviceConfig): number {
-  return crc32(JSON.stringify(config))
+  return crc32(serializeConfigForTransport(config))
 }

@@ -1,4 +1,5 @@
-import { crc32 } from '../../src/shared/configCompiler'
+import { crc32, serializeConfigForTransport } from '../../src/shared/configCompiler'
+import type { DeviceConfig } from '../../src/shared/types/project'
 
 export interface SerialPortInfo {
   path: string
@@ -21,9 +22,12 @@ export interface EspConfigUploadResult {
   error?: string
 }
 
+type JsonPayload = Record<string, unknown>
+
 const COMMAND_TIMEOUT_MS = 30000
-const SINGLE_CONFIG_LIMIT = 7000
-const CHUNK_SIZE = 3000
+// ESP32 JSON command buffer is limited; large configs must use chunked upload.
+const SINGLE_CONFIG_LIMIT = 0
+const CHUNK_SIZE = 240
 
 type SerialPortModule = typeof import('serialport')
 type ReadlineParserModule = typeof import('@serialport/parser-readline')
@@ -60,24 +64,39 @@ export async function listSerialPorts(): Promise<SerialPortInfo[]> {
   }))
 }
 
-type JsonPayload = Record<string, unknown>
+function normalizeSerialPort(path: string): string {
+  // macOS: prefer cu.* (call-out) over tty.* for host-initiated serial I/O.
+  if (path.startsWith('/dev/tty.') && !path.includes('debug')) {
+    return path.replace('/dev/tty.', '/dev/cu.')
+  }
+  return path
+}
 
 async function withOpenPort<T>(
   path: string,
   fn: (
     port: InstanceType<SerialPortModule['SerialPort']>,
     parser: InstanceType<ReadlineParserModule['ReadlineParser']>,
-    send: <R extends JsonPayload>(payload: JsonPayload) => Promise<R>
+    send: <R>(payload: JsonPayload) => Promise<R>
   ) => Promise<T>
 ): Promise<T> {
   const { SerialPort, ReadlineParser } = await loadSerialModules()
+  const devicePath = normalizeSerialPort(path)
 
   return new Promise<T>((resolve, reject) => {
-    const port = new SerialPort({ path, baudRate: 115200, autoOpen: false })
+    // Disable DTR/RTS so opening the port does not reset the ESP (boot logs would
+    // arrive before the JSON response and break JSON.parse on empty lines).
+    const port = new SerialPort({
+      path: devicePath,
+      baudRate: 115200,
+      autoOpen: false,
+      rts: false,
+      dtr: false
+    })
     const parser = port.pipe(new ReadlineParser({ delimiter: '\n' }))
     let pending: ((line: string) => void) | null = null
 
-    const send = <R extends JsonPayload>(payload: JsonPayload): Promise<R> =>
+    const send = <R>(payload: JsonPayload): Promise<R> =>
       new Promise<R>((res, rej) => {
         const timer = setTimeout(() => {
           pending = null
@@ -85,10 +104,14 @@ async function withOpenPort<T>(
         }, COMMAND_TIMEOUT_MS)
 
         pending = (line: string) => {
+          const trimmed = line.trim()
+          // Boot logs and Serial.println() empty lines are not command responses.
+          if (!trimmed.startsWith('{')) return
+
           clearTimeout(timer)
           pending = null
           try {
-            const parsed = JSON.parse(line.trim()) as R & { ok?: boolean; error?: string }
+            const parsed = JSON.parse(trimmed) as R & { ok?: boolean; error?: string }
             if (parsed && typeof parsed === 'object' && parsed.ok === false) {
               rej(new Error(parsed.error ?? 'ESP error'))
               return
@@ -133,7 +156,7 @@ async function withOpenPort<T>(
   })
 }
 
-async function sendJsonCommand<T extends JsonPayload>(path: string, payload: JsonPayload): Promise<T> {
+async function sendJsonCommand<T>(path: string, payload: JsonPayload): Promise<T> {
   return withOpenPort(path, async (_port, _parser, send) => send<T>(payload))
 }
 
@@ -149,7 +172,7 @@ export async function uploadEspConfig(
   path: string,
   config: Record<string, unknown>
 ): Promise<EspConfigUploadResult> {
-  const json = JSON.stringify(config)
+  const json = serializeConfigForTransport(config as unknown as DeviceConfig)
 
   if (json.length <= SINGLE_CONFIG_LIMIT) {
     return sendJsonCommand<EspConfigUploadResult>(path, { cmd: 'config', config })

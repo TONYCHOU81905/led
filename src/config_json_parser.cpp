@@ -107,29 +107,29 @@ bool parse(const char *json, size_t len, DeviceConfig &out) {
     return false;
   }
 
-  DeviceConfig cfg = {};
-  copyStr(cfg.device_id, sizeof(cfg.device_id), device["device_id"] | "");
-  copyStr(cfg.role_id, sizeof(cfg.role_id), device["role_id"] | "");
+  memset(&out, 0, sizeof(out));
+  copyStr(out.device_id, sizeof(out.device_id), device["device_id"] | "");
+  copyStr(out.role_id, sizeof(out.role_id), device["role_id"] | "");
 
-  cfg.hardware.data_gpio =
+  out.hardware.data_gpio =
       static_cast<uint8_t>(device["data_gpio"] | LED_DATA_GPIO);
-  cfg.hardware.led_count =
+  out.hardware.led_count =
       static_cast<uint16_t>(device["led_count"] | LED_COUNT_MAX);
-  cfg.hardware.max_brightness = parseMaxBrightness(device["max_brightness"]);
-  cfg.hardware.refresh_fps = RENDER_FPS;
+  out.hardware.max_brightness = parseMaxBrightness(device["max_brightness"]);
+  out.hardware.refresh_fps = RENDER_FPS;
 
   const char *led_type_str = device["led_type"] | ledChipsetName(
       static_cast<LedChipsetType>(LED_CHIPSET_DEFAULT));
-  if (!parseLedChipset(led_type_str, cfg.hardware.led_type)) {
+  if (!parseLedChipset(led_type_str, out.hardware.led_type)) {
     Serial.printf("[config] unknown led_type '%s', using %s\n", led_type_str,
                   ledChipsetName(static_cast<LedChipsetType>(LED_CHIPSET_DEFAULT)));
-    cfg.hardware.led_type =
+    out.hardware.led_type =
         static_cast<LedChipsetType>(LED_CHIPSET_DEFAULT);
   }
 
-  cfg.network.timecode_port = 4210;
-  cfg.network.status_port = 4211;
-  applyNetworkFields(root, device, cfg.network);
+  out.network.timecode_port = 4210;
+  out.network.status_port = 4211;
+  applyNetworkFields(root, device, out.network);
 
   JsonArrayConst parts = root["parts"].as<JsonArrayConst>();
   if (parts.isNull()) {
@@ -138,11 +138,11 @@ bool parse(const char *json, size_t len, DeviceConfig &out) {
   }
 
   for (JsonObjectConst part : parts) {
-    if (cfg.part_count >= MAX_PARTS) {
+    if (out.part_count >= MAX_PARTS) {
       Serial.println("[config] parse error: too many parts");
       return false;
     }
-    PartDef &p = cfg.parts[cfg.part_count++];
+    PartDef &p = out.parts[out.part_count++];
     copyStr(p.id, sizeof(p.id), part["id"] | "");
     if (p.id[0] == '\0') {
       Serial.println("[config] parse error: part missing id");
@@ -174,11 +174,11 @@ bool parse(const char *json, size_t len, DeviceConfig &out) {
   }
 
   for (JsonPairConst kv : colors) {
-    if (cfg.color_count >= MAX_COLORS) {
+    if (out.color_count >= MAX_COLORS) {
       Serial.println("[config] parse error: too many colors");
       return false;
     }
-    ColorDef &c = cfg.colors[cfg.color_count++];
+    ColorDef &c = out.colors[out.color_count++];
     copyStr(c.name, sizeof(c.name), kv.key().c_str());
     JsonObjectConst rgb = kv.value().as<JsonObjectConst>();
     c.rgb.r = static_cast<uint8_t>(rgb["r"] | 0);
@@ -193,11 +193,11 @@ bool parse(const char *json, size_t len, DeviceConfig &out) {
   }
 
   for (JsonObjectConst evt : events) {
-    if (cfg.event_count >= MAX_EVENTS) {
+    if (out.event_count >= MAX_EVENTS) {
       Serial.println("[config] parse error: too many events");
       return false;
     }
-    TimelineEvent &e = cfg.events[cfg.event_count++];
+    TimelineEvent &e = out.events[out.event_count++];
     e.start_ms = static_cast<uint32_t>(evt["start_ms"] | 0);
     e.end_ms = static_cast<uint32_t>(evt["end_ms"] | 0);
 
@@ -229,8 +229,7 @@ bool parse(const char *json, size_t len, DeviceConfig &out) {
     e.blink.duty = evt["params"]["duty"] | 0.5f;
   }
 
-  cfg.config_crc32 = crc32(json, len);
-  out = cfg;
+  out.config_crc32 = crc32(json, len);
   return true;
 }
 

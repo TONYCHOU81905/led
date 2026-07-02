@@ -3,7 +3,8 @@ import {
   compileRoleToDeviceConfig,
   decompileDeviceConfig,
   compileEvent,
-  configChecksum
+  configChecksum,
+  serializeConfigForTransport
 } from '../src/shared/configCompiler'
 import type { LedProject, RoleDefinition } from '../src/shared/types/project'
 
@@ -57,5 +58,34 @@ describe('configCompiler', () => {
     const b = configChecksum(device)
     expect(a).toBe(b)
     expect(a).toBeGreaterThan(0)
+  })
+
+  it('serializes unicode config into ASCII-safe transport JSON', async () => {
+    const demo = (await import('../examples/demo_show.ledproj.json')).default as LedProject
+    const device = compileRoleToDeviceConfig(
+      {
+        ...demo.roles[0],
+        display_name: '舞者A',
+        parts: demo.roles[0].parts.map((part, index) => ({
+          ...part,
+          display_name: index === 0 ? '左手' : part.display_name
+        }))
+      },
+      demo.colors,
+      {
+        deviceId: 'test',
+        network: {
+          ssid: '測試WiFi',
+          password: '密碼123'
+        }
+      }
+    )
+
+    const transport = serializeConfigForTransport(device)
+    expect(transport).not.toContain('舞')
+    expect(transport).not.toContain('測')
+    expect(transport).toContain('\\u821e')
+    expect(transport).toContain('\\u6e2c')
+    expect(configChecksum(device)).toBeGreaterThan(0)
   })
 })

@@ -3,7 +3,10 @@ import type { BridgeState } from '../shared/types/project'
 
 interface ShowState {
   bridge: BridgeState
+  /** Renderer-side playback position (drives Show time + seek bar). */
+  playbackMs: number
   setBridge: (bridge: BridgeState) => void
+  setPlaybackMs: (ms: number) => void
 }
 
 const defaultBridge: BridgeState = {
@@ -17,5 +20,7 @@ const defaultBridge: BridgeState = {
 
 export const useShowStore = create<ShowState>((set) => ({
   bridge: defaultBridge,
-  setBridge: (bridge) => set({ bridge })
+  playbackMs: 0,
+  setBridge: (bridge) => set({ bridge }),
+  setPlaybackMs: (playbackMs) => set({ playbackMs: Math.max(0, playbackMs) })
 }))

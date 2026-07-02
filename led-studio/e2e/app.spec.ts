@@ -62,15 +62,17 @@ test.describe('LED Show Studio E2E (real Electron)', () => {
     await expect(window.getByRole('button', { name: 'Ping' })).toBeEnabled()
   })
 
-  test('Show Control: Bridge 啟停與 Pause', async ({ window }) => {
-    await nav(window, 'Show Control')
-    await expect(window.getByRole('heading', { name: 'Show Control' })).toBeVisible()
-    const start = window.getByRole('button', { name: 'Start Bridge' })
-    await start.click()
+  test('音樂控制: Bridge 隨播放啟停', async ({ window }) => {
+    await window.getByRole('button', { name: '載入範例專案' }).click()
+    await expect(window.getByText(/已載入範例專案/)).toBeVisible({ timeout: 15_000 })
+    await nav(window, '音樂控制')
+    await expect(window.getByRole('heading', { name: '音樂控制' })).toBeVisible()
+    const play = window.getByRole('button', { name: '播放' })
+    await play.click()
     await expect(window.getByText('RUNNING')).toBeVisible({ timeout: 10_000 })
-    await window.getByRole('button', { name: 'Pause' }).click()
+    await window.getByRole('button', { name: '暫停' }).click()
     await expect(window.getByText('PAUSED')).toBeVisible({ timeout: 10_000 })
-    await window.getByRole('button', { name: 'Stop Bridge' }).click()
+    await window.getByRole('button', { name: '停止' }).click()
     await expect(window.getByText('STOPPED')).toBeVisible({ timeout: 10_000 })
   })
 
@@ -82,7 +84,7 @@ test.describe('LED Show Studio E2E (real Electron)', () => {
 
   test('Sidebar 導航全頁可達', async ({ window }) => {
     await createProject(window)
-    const pages = ['Dashboard', '舞者 CRUD', 'Timeline', 'LED 串聯', 'Devices', 'Show Control', '測試 / 校正'] as const
+    const pages = ['Dashboard', '舞者 CRUD', 'Timeline', 'LED 串聯', 'Devices', '音樂控制', '測試 / 校正'] as const
     for (const p of pages) {
       await nav(window, p)
       await expect(window.locator('main.content')).toBeVisible()

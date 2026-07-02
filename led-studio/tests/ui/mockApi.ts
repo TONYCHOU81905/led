@@ -78,7 +78,13 @@ export function createMockApi(): MockApi {
       bridgeSeek: vi.fn(async (ms: number) => {
         emitBridgeState({ musicTimeMs: ms })
       }),
+      bridgePreviewTime: vi.fn(async (ms: number) => {
+        emitBridgeState({ musicTimeMs: ms, source: 'preview' })
+      }),
       bridgeGetState: vi.fn(async () => bridgeState),
+      bridgeTargetList: vi.fn(async () => []),
+      bridgeTargetAdd: vi.fn(async (ip: string) => [ip]),
+      bridgeTargetRemove: vi.fn(async () => []),
       ltcStart: vi.fn(async () => undefined),
       ltcStop: vi.fn(async () => undefined),
       onBridgeState: vi.fn((cb) => {
@@ -90,7 +96,8 @@ export function createMockApi(): MockApi {
         cb([])
         return () => undefined
       }),
-      espStatusList: vi.fn(async () => [])
+      espStatusList: vi.fn(async () => []),
+      discoverDevices: vi.fn(async () => undefined)
     },
     device: {
       listPorts: vi.fn(async () => [{ path: '/dev/cu.usbserial-mock', manufacturer: 'Espressif' }]),
@@ -99,7 +106,7 @@ export function createMockApi(): MockApi {
       uploadConfig: vi.fn(async () => ({ ok: true, crc32: 1234, events: 1, flash_saved: true })),
       reloadConfig: vi.fn(async () => ({ ok: true, crc32: 1234, events: 1 })),
       getStatus: vi.fn(async () => ({ ok: true, wifi: 'connected' })),
-      flashFirmware: vi.fn(async (_port, onProgress) => {
+      flashFirmware: vi.fn(async (_port, _boardId, onProgress) => {
         onProgress({ stage: 'flash', message: 'mock flash ok' })
       })
     }

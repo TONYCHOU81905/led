@@ -9,7 +9,7 @@ public:
   void onStart(uint32_t music_time_ms, int64_t now_us);
   void onRunning(uint32_t music_time_ms, int64_t now_us);
   void onSeek(uint32_t music_time_ms, int64_t now_us);
-  void onPause(int64_t now_us);
+  void onPause(uint32_t music_time_ms, int64_t now_us);
   void onStop();
 
   uint32_t musicTimeMs(int64_t now_us) const;

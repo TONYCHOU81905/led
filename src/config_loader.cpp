@@ -6,12 +6,10 @@
 #include <Arduino.h>
 
 static bool loadParsedConfig(const char *json, size_t len, DeviceConfig &out) {
-  DeviceConfig parsed{};
-  if (!ConfigJsonParser::parse(json, len, parsed)) {
+  if (!ConfigJsonParser::parse(json, len, out)) {
     return false;
   }
-  NvsWifi::loadNetworkOverlay(parsed.network);
-  out = parsed;
+  NvsWifi::loadNetworkOverlay(out.network);
   return true;
 }
 
@@ -30,7 +28,7 @@ bool ConfigLoader::load(DeviceConfig &out) {
     Serial.println("[config] flash parse failed, falling back to default");
   }
 
-  _cfg = makeDefaultConfig();
+  initDefaultConfig(_cfg);
   NvsWifi::loadNetworkOverlay(_cfg.network);
   _loaded = true;
   out = _cfg;

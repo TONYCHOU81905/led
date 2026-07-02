@@ -28,7 +28,7 @@ function AppShell() {
         <NavLink to="/timeline">Timeline</NavLink>
         <NavLink to="/led-chain">LED 串聯</NavLink>
         <NavLink to="/devices">Devices</NavLink>
-        <NavLink to="/show">Show Control</NavLink>
+        <NavLink to="/show">音樂控制</NavLink>
         <NavLink to="/calibration">測試 / 校正</NavLink>
       </nav>
       <div className="main-column">

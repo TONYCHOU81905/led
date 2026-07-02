@@ -25,4 +25,7 @@ private:
   uint32_t _drop_count = 0;
   uint32_t _last_seq = 0;
   uint32_t _last_packet_ms = 0;
+  uint32_t _last_debug_log_ms = 0;
+  uint32_t _last_drop_log_ms = 0;
+  bool _has_logged_first_packet = false;
 };

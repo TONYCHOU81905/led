@@ -7,6 +7,7 @@ import type {
   LedProject,
   LedStudioApi
 } from '../src/shared/types/project'
+import type { FlashBoardId } from '../src/shared/boardTargets'
 
 const api: LedStudioApi = {
   project: {
@@ -34,7 +35,11 @@ const api: LedStudioApi = {
     bridgePause: () => ipcRenderer.invoke('show:bridgePause'),
     bridgeResume: () => ipcRenderer.invoke('show:bridgeResume'),
     bridgeSeek: (musicTimeMs: number) => ipcRenderer.invoke('show:bridgeSeek', musicTimeMs),
+    bridgePreviewTime: (musicTimeMs: number) => ipcRenderer.invoke('show:bridgePreviewTime', musicTimeMs),
     bridgeGetState: () => ipcRenderer.invoke('show:bridgeGetState') as Promise<BridgeState>,
+    bridgeTargetList: () => ipcRenderer.invoke('show:bridgeTargetList') as Promise<string[]>,
+    bridgeTargetAdd: (ip: string) => ipcRenderer.invoke('show:bridgeTargetAdd', ip) as Promise<string[]>,
+    bridgeTargetRemove: (ip: string) => ipcRenderer.invoke('show:bridgeTargetRemove', ip) as Promise<string[]>,
     ltcStart: (options?: { wavPath?: string; durationMs?: number }) =>
       ipcRenderer.invoke('show:ltcStart', options),
     ltcStop: () => ipcRenderer.invoke('show:ltcStop'),
@@ -50,7 +55,8 @@ const api: LedStudioApi = {
       void ipcRenderer.invoke('show:espStatusList').then(cb)
       return () => ipcRenderer.removeListener('show:espStatus', handler)
     },
-    espStatusList: () => ipcRenderer.invoke('show:espStatusList') as Promise<EspDeviceStatus[]>
+    espStatusList: () => ipcRenderer.invoke('show:espStatusList') as Promise<EspDeviceStatus[]>,
+    discoverDevices: () => ipcRenderer.invoke('show:discoverDevices') as Promise<void>
   },
   device: {
     listPorts: () => ipcRenderer.invoke('device:listPorts'),
@@ -61,11 +67,11 @@ const api: LedStudioApi = {
       ipcRenderer.invoke('device:uploadConfig', port, config),
     reloadConfig: (port: string) => ipcRenderer.invoke('device:reloadConfig', port),
     getStatus: (port: string) => ipcRenderer.invoke('device:getStatus', port),
-    flashFirmware: (port: string, onProgress: (p: { stage: string; message: string }) => void) => {
+    flashFirmware: (port: string, boardId: FlashBoardId, onProgress: (p: { stage: string; message: string }) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, progress: { stage: string; message: string }) =>
         onProgress(progress)
       ipcRenderer.on('device:flashProgress', handler)
-      return ipcRenderer.invoke('device:flashFirmware', port).finally(() => {
+      return ipcRenderer.invoke('device:flashFirmware', port, boardId).finally(() => {
         ipcRenderer.removeListener('device:flashProgress', handler)
       })
     }

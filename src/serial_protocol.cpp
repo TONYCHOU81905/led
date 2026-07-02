@@ -119,24 +119,31 @@ bool SerialProtocol::finalizeConfigJson(
     const uint8_t prev_gpio, const uint16_t prev_led_count,
     const LedChipsetType prev_led_type, const char *prev_ssid,
     const char *prev_pass) {
-  DeviceConfig parsed{};
-  if (!ConfigJsonParser::parse(json, len, parsed)) {
+  char fallback_ssid[64];
+  char fallback_pass[64];
+  strncpy(fallback_ssid, cfg.network.ssid, sizeof(fallback_ssid) - 1);
+  fallback_ssid[sizeof(fallback_ssid) - 1] = '\0';
+  strncpy(fallback_pass, cfg.network.password, sizeof(fallback_pass) - 1);
+  fallback_pass[sizeof(fallback_pass) - 1] = '\0';
+  const uint16_t fallback_tc_port = cfg.network.timecode_port;
+  const uint16_t fallback_st_port = cfg.network.status_port;
+
+  if (!ConfigJsonParser::parse(json, len, cfg)) {
     respondError("config parse failed");
     return false;
   }
 
-  if (parsed.network.ssid[0] == '\0') {
-    strncpy(parsed.network.ssid, cfg.network.ssid, sizeof(parsed.network.ssid) - 1);
-    parsed.network.ssid[sizeof(parsed.network.ssid) - 1] = '\0';
-    strncpy(parsed.network.password, cfg.network.password,
-            sizeof(parsed.network.password) - 1);
-    parsed.network.password[sizeof(parsed.network.password) - 1] = '\0';
+  if (cfg.network.ssid[0] == '\0') {
+    strncpy(cfg.network.ssid, fallback_ssid, sizeof(cfg.network.ssid) - 1);
+    cfg.network.ssid[sizeof(cfg.network.ssid) - 1] = '\0';
+    strncpy(cfg.network.password, fallback_pass, sizeof(cfg.network.password) - 1);
+    cfg.network.password[sizeof(cfg.network.password) - 1] = '\0';
   }
-  parsed.network.timecode_port = cfg.network.timecode_port;
-  parsed.network.status_port = cfg.network.status_port;
-  NvsWifi::loadNetworkOverlay(parsed.network);
+  cfg.network.timecode_port = fallback_tc_port;
+  cfg.network.status_port = fallback_st_port;
+  NvsWifi::loadNetworkOverlay(cfg.network);
 
-  if (!loader.applyDeviceConfig(parsed, json, len, cfg)) {
+  if (!loader.applyDeviceConfig(cfg, json, len, cfg)) {
     respondError("config apply failed");
     return false;
   }
@@ -193,8 +200,8 @@ void SerialProtocol::respondConfig(JsonObjectConst root, ConfigLoader &loader,
 
 void SerialProtocol::respondBeginConfig(JsonObjectConst root) {
   _chunk.reset();
-  const uint32_t size = root["size"] | 0;
-  const uint32_t crc = root["crc32"] | 0;
+  const uint32_t size = root["size"].as<uint32_t>();
+  const uint32_t crc = root["crc32"].as<uint32_t>();
   if (!_chunk.begin(size, crc)) {
     respondError("begin_config failed");
     return;
@@ -214,8 +221,13 @@ void SerialProtocol::respondConfigChunk(JsonObjectConst root) {
   }
 
   const uint32_t offset = root["offset"] | 0;
-  const char *data = root["data"] | "";
-  const size_t len = strlen(data);
+  const JsonString data_str = root["data"].as<JsonString>();
+  const char *data = data_str.c_str();
+  const size_t len = data_str.size();
+  if (!data || len == 0) {
+    respondError("config_chunk missing data");
+    return;
+  }
   if (!_chunk.append(offset, data, len)) {
     respondError("config_chunk failed");
     return;
@@ -239,6 +251,8 @@ void SerialProtocol::respondEndConfig(ConfigLoader &loader, DeviceConfig &cfg) {
   const uint32_t calc =
       ConfigJsonParser::crc32(_chunk.buffer, _chunk.total);
   if (calc != _chunk.expected_crc) {
+    Serial.printf("[config] crc mismatch expected=0x%08X calc=0x%08X size=%u\n",
+                  _chunk.expected_crc, calc, _chunk.total);
     _chunk.reset();
     respondError("config crc mismatch");
     return;
