@@ -133,6 +133,13 @@ void setup() {
     while (true) delay(1000);
   }
 
+#ifndef LED_DISABLE_BOOT_SELFTEST
+  // Wiring check: flash the strip on power-up to confirm the data line (GPIO)
+  // is connected and the chipset/color order is correct. Disable with
+  // -DLED_DISABLE_BOOT_SELFTEST once wiring is verified.
+  g_leds.selfTest(3000);
+#endif
+
   g_serial.begin();
 
   g_state = STATE_WIFI_CONNECTING;

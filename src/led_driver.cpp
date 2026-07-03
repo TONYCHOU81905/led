@@ -75,6 +75,29 @@ void LedDriver::show() {
   FastLED.show();
 }
 
+void LedDriver::selfTest(uint32_t duration_ms) {
+  if (!_initialized) return;
+  Serial.printf("[led] self-test: blink R/G/B %ums on GPIO=%u chipset=%s "
+                "(expect flashing; colors should read R->G->B)\n",
+                duration_ms, _data_gpio, ledChipsetName(_chipset));
+
+  static const RgbColor kColors[3] = {{255, 0, 0}, {0, 255, 0}, {0, 0, 255}};
+  const uint32_t start = millis();
+  uint8_t step = 0;
+  while (millis() - start < duration_ms) {
+    fillSolid(kColors[step % 3]);
+    show();
+    delay(250);
+    clear();
+    show();
+    delay(150);
+    step++;
+  }
+  clear();
+  show();
+  Serial.println("[led] self-test done");
+}
+
 void LedDriver::showStatusColor(const RgbColor &c, uint32_t now_ms, bool pulse) {
   uint8_t r = c.r, g = c.g, b = c.b;
   if (pulse) {

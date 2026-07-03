@@ -5,6 +5,8 @@ export interface FlashBoardTarget {
   label: string
   pioEnv: string
   esptoolChip: 'esp32s3' | 'esp32'
+  /** Bootloader flash offset — ESP32-S3 is 0x0, classic ESP32 is 0x1000 */
+  bootloaderOffset: number
   /** Factory app offset — matches partitions.csv / partitions-esp32.csv */
   flashOffset: number
   flashSize: '4MB' | '8MB'
@@ -26,6 +28,7 @@ export const FLASH_BOARD_TARGETS: FlashBoardTarget[] = [
     label: 'ESP32-S3 DevKitC-1',
     pioEnv: 'esp32-s3-devkitc-1',
     esptoolChip: 'esp32s3',
+    bootloaderOffset: 0x0,
     flashOffset: 0x10000,
     flashSize: '8MB',
     flashMode: 'dio',
@@ -41,6 +44,7 @@ export const FLASH_BOARD_TARGETS: FlashBoardTarget[] = [
     label: 'ESP32 DevKit (classic)',
     pioEnv: 'esp32-dev',
     esptoolChip: 'esp32',
+    bootloaderOffset: 0x1000,
     flashOffset: 0x10000,
     flashSize: '4MB',
     flashMode: 'dio',

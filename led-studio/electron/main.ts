@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
-import { join } from 'node:path'
+import { join, isAbsolute } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { readFile, writeFile } from 'node:fs/promises'
 import { flashFirmware } from './services/flasher'
@@ -192,7 +192,7 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('project:getMusicFileUrl', async (_event, filePath: string): Promise<string> => {
-    const resolved = filePath.startsWith('/')
+    const resolved = isAbsolute(filePath)
       ? filePath
       : resolveAppResource(filePath)
     return pathToFileURL(resolved).href
@@ -201,7 +201,7 @@ app.whenReady().then(() => {
   ipcMain.handle(
     'project:readMusicFile',
     async (_event, filePath: string): Promise<{ data: Uint8Array; mime: string }> => {
-      const resolved = filePath.startsWith('/')
+      const resolved = isAbsolute(filePath)
         ? filePath
         : resolveAppResource(filePath)
       const buf = await readFile(resolved)

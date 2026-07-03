@@ -35,7 +35,7 @@ export function resolveMusicFilePath(
   if (!musicRef?.trim()) return undefined
 
   const trimmed = musicRef.trim()
-  if (trimmed.startsWith('/')) return trimmed
+  if (trimmed.startsWith('/') || /^[A-Za-z]:[/\\]/.test(trimmed)) return trimmed
 
   const projectDir = projectDirFromFilePath(projectFilePath)
   const sibling = joinProjectPath(projectDir, trimmed)

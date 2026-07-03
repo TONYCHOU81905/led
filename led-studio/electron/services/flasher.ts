@@ -36,6 +36,10 @@ function resolveFlashArtifacts(pioEnv: string): FlashArtifacts {
 }
 
 function buildEsptoolArgs(port: string, board: ReturnType<typeof getFlashBoardTarget>, artifacts: FlashArtifacts): string[] {
+  // Global options (before the operation). NOTE: esptool >= 4.x requires the
+  // flash options (--flash_mode/_freq/_size) to come AFTER `write_flash`, not
+  // here; placing them before makes esptool treat 'dio' as the operation and
+  // exit with code 2.
   const args = [
     '-m',
     'esptool',
@@ -49,6 +53,7 @@ function buildEsptoolArgs(port: string, board: ReturnType<typeof getFlashBoardTa
     'default_reset',
     '--after',
     'hard_reset',
+    'write_flash',
     '--flash_mode',
     board.flashMode,
     '--flash_freq',
@@ -61,11 +66,10 @@ function buildEsptoolArgs(port: string, board: ReturnType<typeof getFlashBoardTa
     args.push('--no-compress')
   }
 
-  args.push('write_flash')
-
   if (artifacts.bootloaderBin && artifacts.partitionsBin) {
+    // Bootloader offset differs per chip: ESP32-S3 = 0x0, classic ESP32 = 0x1000
     args.push(
-      '0x1000',
+      `0x${board.bootloaderOffset.toString(16)}`,
       artifacts.bootloaderBin,
       '0x8000',
       artifacts.partitionsBin,
@@ -115,10 +119,10 @@ export async function flashFirmware(
         resolve()
       } else {
         const hint =
-          board.noCompress && code === 2
-            ? ' Try holding BOOT, use a shorter USB cable, or run `pio run -e esp32-dev -t upload` once.'
+          code === 2
+            ? ` If not connected: hold BOOT then flash, or run \`${board.buildHint} -t upload\` once. If esptool is missing: pip install esptool.`
             : ''
-        const msg = `esptool exited with code ${code}.${hint} Install: pip install esptool`
+        const msg = `esptool exited with code ${code}.${hint}`
         onProgress({ stage: 'error', message: msg })
         reject(new Error(msg))
       }

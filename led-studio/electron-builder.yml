@@ -12,6 +12,16 @@ files:
   - examples/**/*
   - node_modules/serialport/**/*
   - node_modules/@serialport/**/*
+  # Ship serialport's prebuilt binaries as-is; do NOT package the host
+  # build/Release/*.node (built for the packaging machine's arch), because
+  # node-gyp-build loads build/Release before prebuilds/<platform>-<arch>
+  # and would shadow the correct target binary at runtime.
+  - "!node_modules/@serialport/bindings-cpp/build/**"
+
+# serialport ships prebuildify prebuilds for every platform/arch, so let
+# node-gyp-build pick the right one at runtime. Rebuilding from source here
+# breaks cross-arch packaging (node-gyp cannot cross-compile).
+npmRebuild: false
 
 asar: true
 asarUnpack:

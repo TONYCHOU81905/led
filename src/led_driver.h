@@ -12,6 +12,9 @@ public:
   void setPixel(uint16_t index, const RgbColor &c);
   void show();
   void showStatusColor(const RgbColor &c, uint32_t now_ms, bool pulse = false);
+  // Boot-time wiring/chipset self-test: cycles R/G/B blink for ~3s so you can
+  // confirm the data line is wired and the color order is correct.
+  void selfTest(uint32_t duration_ms = 3000);
 
   uint16_t ledCount() const { return _led_count; }
   LedChipsetType chipset() const { return _chipset; }

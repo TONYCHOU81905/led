@@ -16,4 +16,9 @@ describe('boardTargets', () => {
   it('defaults to ESP32-S3 when storage is empty', () => {
     expect(loadStoredFlashBoardId()).toBe(DEFAULT_FLASH_BOARD_ID)
   })
+
+  it('uses chip-correct bootloader offsets (S3=0x0, classic=0x1000)', () => {
+    expect(getFlashBoardTarget('esp32-s3').bootloaderOffset).toBe(0x0)
+    expect(getFlashBoardTarget('esp32').bootloaderOffset).toBe(0x1000)
+  })
 })

@@ -1,6 +1,6 @@
 import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, isAbsolute } from 'node:path'
 import type { LedProject } from '../../src/shared/types/project'
 import {
   hydrateProjectMusicPath,
@@ -24,7 +24,7 @@ export function resolveMusicPathForProject(
 ): string | undefined {
   if (!musicRef?.trim()) return undefined
   const trimmed = musicRef.trim()
-  if (trimmed.startsWith('/')) return trimmed
+  if (isAbsolute(trimmed)) return trimmed
 
   const projectDir = projectDirFromFilePath(projectFilePath)
   return pickExistingPath([
