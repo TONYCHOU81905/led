@@ -1,11 +1,18 @@
 import { useMemo, useState } from 'react'
 import { compileEvents } from '../../shared/configCompiler'
-import { resolveAllParts } from '../../shared/timelineEngine'
+import {
+  describeEventRoute,
+  pickWinningEvent,
+  queryActiveEvents,
+  resolvePartColor,
+  resolvePartPixels
+} from '../../shared/timelineEngine'
 import { colorToCss } from '../../shared/stageColors'
 import { formatMsToTime } from '../../shared/timeParse'
 import type { LedProject, RoleDefinition } from '../../shared/types/project'
-import { DancerFigureSvg } from './DancerFigureSvg'
-import { PREVIEW_ALL_ROLES, resolveFigureRegions } from './partRegionMap'
+import { getEffectLabel, listEventRouteLabels } from '../../shared/timelineEffects'
+import { DancerFigureSvg, REGION_PIXEL_COUNTS } from './DancerFigureSvg'
+import { PREVIEW_ALL_ROLES, regionsForParts, resolveFigureRegionPixels } from './partRegionMap'
 
 interface DancerPreviewPanelProps {
   project: LedProject
@@ -17,27 +24,67 @@ interface DancerPreviewPanelProps {
 function RolePreviewCard({
   role,
   colors,
-  playheadMs
+  playheadMs,
+  showFlowGuide
 }: {
   role: RoleDefinition
   colors: LedProject['colors']
   playheadMs: number
+  showFlowGuide: boolean
 }) {
-  const { regions, unmapped } = useMemo(() => {
+  const visibleRegions = useMemo(() => regionsForParts(role.parts), [role.parts])
+
+  const { regionPixels, unmapped, activeSummary } = useMemo(() => {
     const compiled = compileEvents(role.events)
-    const resolved = resolveAllParts(
-      compiled,
-      role.parts.map((p) => p.id),
-      playheadMs,
-      colors
-    )
-    return resolveFigureRegions(role.parts, resolved)
+    const routeEvent = queryActiveEvents(compiled, playheadMs)
+      .filter((event) => (event.params?.route_parts?.length ?? 0) > 1)
+      .sort((a, b) => b.priority - a.priority)[0]
+
+    const focusPart = role.parts[0]?.id ?? 'body'
+    const winner = pickWinningEvent(compiled, focusPart, playheadMs)
+    const routeState = routeEvent ? describeEventRoute(routeEvent, playheadMs, role.parts) : null
+    const routeLabels =
+      routeEvent && routeState
+        ? listEventRouteLabels(routeEvent.targets, role.parts, routeEvent.params)
+        : []
+
+    return {
+      ...resolveFigureRegionPixels(
+        role.parts,
+        REGION_PIXEL_COUNTS,
+        (partId, pixelCount) => resolvePartPixels(compiled, partId, playheadMs, colors, pixelCount, role.parts),
+        (partId) => resolvePartColor(compiled, partId, playheadMs, colors)
+      ),
+      activeSummary: {
+        effectLabel: winner ? getEffectLabel(winner.effect) : '未亮燈',
+        routeLabel: routeEvent?.params?.route_label,
+        activeStep:
+          routeState && routeLabels.length > 0
+            ? routeLabels[routeState.activeIndex] ?? routeLabels[0]
+            : null
+      }
+    }
   }, [role, colors, playheadMs])
 
   return (
     <div className="dancer-preview-card">
       <div className="dancer-preview-card-title">{role.display_name}</div>
-      <DancerFigureSvg regions={regions} className="dancer-preview-figure" title={role.display_name} />
+      <DancerFigureSvg
+        regionPixels={regionPixels}
+        visibleRegions={visibleRegions}
+        showFlowGuide={showFlowGuide}
+        className="dancer-preview-figure"
+        title={role.display_name}
+      />
+      <div className="dancer-preview-meta">
+        <div className="dancer-preview-effect">{activeSummary.effectLabel}</div>
+        {activeSummary.routeLabel && (
+          <div className="dancer-preview-route">
+            <span>{activeSummary.routeLabel}</span>
+            {activeSummary.activeStep && <strong>目前：{activeSummary.activeStep}</strong>}
+          </div>
+        )}
+      </div>
       {unmapped.length > 0 && (
         <ul className="dancer-preview-unmapped">
           {unmapped.map(({ partId, label, color }) => (
@@ -65,6 +112,7 @@ export function DancerPreviewPanel({ project, playheadMs, activeRoleId, onClose 
     : roles[0]?.role_id ?? PREVIEW_ALL_ROLES
 
   const [selection, setSelection] = useState(defaultSelection)
+  const [showFlowGuide, setShowFlowGuide] = useState(true)
 
   const effectiveSelection =
     selection === PREVIEW_ALL_ROLES || roles.some((r) => r.role_id === selection)
@@ -82,6 +130,15 @@ export function DancerPreviewPanel({ project, playheadMs, activeRoleId, onClose 
         <h3>燈光預覽</h3>
         <div className="dancer-preview-header-actions">
           <span className="dancer-preview-time">{formatMsToTime(playheadMs)}</span>
+          <button
+            type="button"
+            className="dancer-preview-flow-toggle"
+            aria-pressed={showFlowGuide}
+            onClick={() => setShowFlowGuide((v) => !v)}
+            title="切換流動示意"
+          >
+            流動示意
+          </button>
           {onClose && (
             <button
               type="button"
@@ -127,6 +184,7 @@ export function DancerPreviewPanel({ project, playheadMs, activeRoleId, onClose 
             role={role}
             colors={project.colors}
             playheadMs={playheadMs}
+            showFlowGuide={showFlowGuide}
           />
         ))}
       </div>

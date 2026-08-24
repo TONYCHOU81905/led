@@ -97,6 +97,8 @@ export function MusicTransportPanel() {
       if (ms > 0) await window.api.show.bridgeSeek(ms)
     } else if (bridgeState.paused) {
       await window.api.show.bridgeResume()
+      // 再送一次 SEEK 讓韌體硬定位回暫停點（相容尚未支援 resume 的舊韌體）
+      await window.api.show.bridgeSeek(Math.round(audio.currentTime * 1000))
     }
 
     // audio.play() 在某些環境（jsdom、autoplay policy）可能回傳 undefined 或 reject

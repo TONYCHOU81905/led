@@ -4,7 +4,12 @@ import type {
   RoleDefinition,
   TimelineEventUI
 } from './types/project'
-import { cloneDefaultChainParts, createPartAfterExisting } from './ledChainDefaults'
+import {
+  cloneDefaultChainParts,
+  cloneDefaultLedOutputs,
+  createPartAfterExisting,
+  partsFromLedOutputs
+} from './ledChainDefaults'
 import { STAGE_COLORS } from './stageColors'
 
 export function createEmptyProject(name = 'New Show'): LedProject {
@@ -44,6 +49,7 @@ export function createRole(roleId: string, displayName: string): RoleDefinition 
     role_id: roleId,
     display_name: displayName,
     parts: cloneDefaultChainParts(),
+    led_outputs: cloneDefaultLedOutputs(),
     events: []
   }
 }
@@ -146,7 +152,30 @@ export function updatePart(
 }
 
 export function resetPartsToDefault(project: LedProject, roleId: string): LedProject {
-  return updateRole(project, roleId, { parts: cloneDefaultChainParts() })
+  const outputs = cloneDefaultLedOutputs()
+  return touchProject({
+    ...project,
+    roles: project.roles.map((role) => role.role_id === roleId
+      ? { ...role, led_outputs: outputs, parts: partsFromLedOutputs(outputs) }
+      : role)
+  })
+}
+
+export function updateLedOutput(
+  project: LedProject,
+  roleId: string,
+  outputId: string,
+  patch: Partial<import('./types/project').LedOutputDefinition>
+): LedProject {
+  return touchProject({
+    ...project,
+    roles: project.roles.map((role) => {
+      if (role.role_id !== roleId) return role
+      const current = role.led_outputs ?? cloneDefaultLedOutputs()
+      const outputs = current.map((output) => output.id === outputId ? { ...output, ...patch } : output)
+      return { ...role, led_outputs: outputs, parts: partsFromLedOutputs(outputs) }
+    })
+  })
 }
 
 export function addEvent(project: LedProject, roleId: string, event: TimelineEventUI): LedProject {
@@ -166,6 +195,11 @@ export function updateEvent(
 
 export function deleteEvent(project: LedProject, roleId: string, eventId: string): LedProject {
   return mapRoleEvents(project, roleId, (events) => events.filter((e) => e.id !== eventId))
+}
+
+/** 整批取代某個 role 的 events */
+export function replaceEvents(project: LedProject, roleId: string, events: TimelineEventUI[]): LedProject {
+  return mapRoleEvents(project, roleId, () => events)
 }
 
 export function newEventId(): string {

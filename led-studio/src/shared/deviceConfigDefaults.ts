@@ -3,10 +3,9 @@ import type { CompileOptions } from './configCompiler'
 export function defaultCompileOptions(roleId: string): CompileOptions {
   return {
     deviceId: `esp32s3_${roleId}_001`,
-    dataGpio: 8,
-    ledType: 'WS2811',
-    ledCount: 120,
-    maxBrightness: 0.4,
+    dataGpio: 4,
+    ledType: 'WS2812B',
+    maxBrightness: 0.25,
     network: {
       ssid: '',
       password: '',

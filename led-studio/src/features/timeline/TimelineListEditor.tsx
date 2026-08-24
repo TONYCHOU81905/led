@@ -1,7 +1,8 @@
 import { useMemo } from 'react'
 import { compileEvents } from '@shared/configCompiler'
 import { resolveAllParts } from '@shared/timelineEngine'
-import { colorToCss } from '@shared/stageColors'
+import { colorToCss, getStageColorLabel } from '@shared/stageColors'
+import { getEffectLabel } from '@shared/timelineEffects'
 import type { LedProject, RoleDefinition, TimelineEventUI } from '@shared/types/project'
 
 interface TimelineListProps {
@@ -20,9 +21,9 @@ function EventRow({ event, colors }: { event: TimelineEventUI; colors: LedProjec
       <td>{event.targets.join(', ')}</td>
       <td>
         <span className="color-swatch" style={{ background: bg }} />
-        {event.color}
+        {getStageColorLabel(event.color)}
       </td>
-      <td>{event.effect}</td>
+      <td>{getEffectLabel(event.effect)}</td>
       <td>{event.priority}</td>
     </tr>
   )

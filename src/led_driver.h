@@ -17,13 +17,15 @@ public:
   void selfTest(uint32_t duration_ms = 3000);
 
   uint16_t ledCount() const { return _led_count; }
+  uint8_t outputCount() const { return _output_count; }
   LedChipsetType chipset() const { return _chipset; }
   CRGB *buffer() { return _leds; }
 
 private:
   CRGB _leds[LED_COUNT_MAX];
   uint16_t _led_count = 0;
-  uint8_t _data_gpio = LED_DATA_GPIO;
+  LedOutputConfig _outputs[MAX_LED_OUTPUTS]{};
+  uint8_t _output_count = 0;
   LedChipsetType _chipset = static_cast<LedChipsetType>(LED_CHIPSET_DEFAULT);
   bool _initialized = false;
 };

@@ -13,12 +13,29 @@ inline void initDefaultConfig(DeviceConfig &cfg) {
   snprintf(cfg.role_id, sizeof(cfg.role_id), "dancer_demo");
   cfg.config_crc32 = 0xDEADBEEF;
 
-  // hardware.data_gpio overrides compile-time LED_DATA_GPIO when non-zero
   cfg.hardware.data_gpio = LED_DATA_GPIO;
-  cfg.hardware.led_count = LED_COUNT_MAX;
-  cfg.hardware.led_type = static_cast<LedChipsetType>(LED_CHIPSET_DEFAULT);
-  cfg.hardware.max_brightness = 0.4f;
+  cfg.hardware.led_type = LED_CHIPSET_WS2812B;
+  cfg.hardware.max_brightness = 0.25f;
   cfg.hardware.refresh_fps = RENDER_FPS;
+
+// Five-channel wearable defaults are ESP32-S3 only (GPIO 6/7 are flash on classic ESP32).
+#if CONFIG_IDF_TARGET_ESP32S3 && LED_COUNT_MAX >= 580
+  cfg.hardware.led_count = 580;
+  auto addOutput = [&](const char *id, uint8_t gpio, uint16_t offset, uint16_t count) {
+    LedOutputConfig &output = cfg.hardware.outputs[cfg.hardware.output_count++];
+    snprintf(output.id, sizeof(output.id), "%s", id);
+    output.data_gpio = gpio;
+    output.offset = offset;
+    output.led_count = count;
+  };
+  addOutput("hat", 4, 0, 60);
+  addOutput("right_arm", 5, 60, 130);
+  addOutput("right_leg", 6, 190, 130);
+  addOutput("left_leg", 7, 320, 130);
+  addOutput("left_arm", 15, 450, 130);
+#else
+  cfg.hardware.led_count = LED_COUNT_MAX > 120 ? 120 : LED_COUNT_MAX;
+#endif
 
   snprintf(cfg.network.ssid, sizeof(cfg.network.ssid), "SHOW_SYNC_AP");
   snprintf(cfg.network.password, sizeof(cfg.network.password), "CHANGE_ME");
@@ -53,7 +70,7 @@ inline void initDefaultConfig(DeviceConfig &cfg) {
   addColor("white", 255, 255, 255);
   addColor("off", 0, 0, 0);
 
-  // --- Body parts (LED ranges scale with LED_COUNT_MAX) ---
+  // --- Body parts in top-to-bottom, right-to-left order (wearer's view) ---
   auto addPart = [&](const char *id, uint16_t start, uint16_t end) {
     if (cfg.part_count >= MAX_PARTS) return;
     PartDef &p = cfg.parts[cfg.part_count++];
@@ -62,12 +79,29 @@ inline void initDefaultConfig(DeviceConfig &cfg) {
     p.range_count = 1;
   };
 
-  const uint16_t n = cfg.hardware.led_count;
-  const uint16_t q = n / 4;
-  addPart("hand", 0, q - 1);
-  addPart("foot", q, 2 * q - 1);
-  addPart("head", 2 * q, 3 * q - 1);
-  addPart("body", 3 * q, n - 1);
+#if CONFIG_IDF_TARGET_ESP32S3 && LED_COUNT_MAX >= 580
+  addPart("head", 0, 59);
+  addPart("right_hand", 60, 189);
+  addPart("right_foot", 190, 319);
+  addPart("left_foot", 320, 449);
+  addPart("left_hand", 450, 579);
+#else
+  addPart("head", 0, cfg.hardware.led_count - 1);
+#endif
+
+  auto findPartIndex = [&](const char *id) -> int {
+    for (uint8_t i = 0; i < cfg.part_count; ++i) {
+      if (strcmp(cfg.parts[i].id, id) == 0) return i;
+    }
+    return -1;
+  };
+
+  auto findColorIndex = [&](const char *name) -> int {
+    for (uint8_t i = 0; i < cfg.color_count; ++i) {
+      if (strcmp(cfg.colors[i].name, name) == 0) return i;
+    }
+    return -1;
+  };
 
   // --- Demo timeline events ---
   auto addEvent = [&](uint32_t start_ms, uint32_t end_ms, const char *target,
@@ -78,18 +112,19 @@ inline void initDefaultConfig(DeviceConfig &cfg) {
     e.start_ms = start_ms;
     e.end_ms = end_ms;
     e.target_count = 1;
-    snprintf(e.targets[0], sizeof(e.targets[0]), "%s", target);
-    snprintf(e.color_name, sizeof(e.color_name), "%s", color);
+    e.targets[0] = static_cast<uint8_t>(findPartIndex(target));
+    e.color_index = static_cast<uint8_t>(findColorIndex(color));
     e.effect = effect;
     e.priority = priority;
     e.blink = {blink_hz, duty};
+    e.params.secondary_color_index = 0xFF;
   };
 
-  addEvent(0, 1000, "hand", "electric_cyan", EFFECT_SOLID, 10);
-  addEvent(0, 1000, "foot", "laser_lime", EFFECT_SOLID, 10);
-  addEvent(1000, 2000, "head", "hot_magenta", EFFECT_BLINK, 20, 8.0f, 0.5f);
-  addEvent(1500, 3000, "body", "royal_violet", EFFECT_FADE_IN, 15);
-  addEvent(3000, 4500, "hand", "golden_spark", EFFECT_FADE_OUT, 15);
-  addEvent(4000, 6000, "foot", "flame_orange", EFFECT_SOLID, 10);
-  addEvent(5000, 5500, "head", "deep_crimson", EFFECT_BLINK, 25, 12.0f, 0.4f);
+  addEvent(0, 1000, "head", "hot_magenta", EFFECT_BLINK, 20, 8.0f, 0.5f);
+#if CONFIG_IDF_TARGET_ESP32S3 && LED_COUNT_MAX >= 580
+  addEvent(1000, 2500, "right_hand", "electric_cyan", EFFECT_WIPE_IN, 10);
+  addEvent(2000, 3500, "right_foot", "laser_lime", EFFECT_CHASE, 10);
+  addEvent(3000, 4500, "left_foot", "flame_orange", EFFECT_WAVE, 10);
+  addEvent(4000, 5500, "left_hand", "golden_spark", EFFECT_WIPE_IN, 10);
+#endif
 }

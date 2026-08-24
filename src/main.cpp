@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <esp_system.h>
 #include "config_loader.h"
 #include "clock_sync.h"
 #include "led_driver.h"
@@ -25,6 +26,22 @@ static bool g_timecode_blackout = false;
 static uint32_t g_last_wifi_retry_ms = 0;
 static uint32_t g_last_health_log_ms = 0;
 static bool g_wifi_was_connected = false;
+
+static const char *resetReasonName(esp_reset_reason_t reason) {
+  switch (reason) {
+  case ESP_RST_POWERON: return "power_on";
+  case ESP_RST_EXT: return "external_reset";
+  case ESP_RST_SW: return "software_reset";
+  case ESP_RST_PANIC: return "panic";
+  case ESP_RST_INT_WDT: return "interrupt_watchdog";
+  case ESP_RST_TASK_WDT: return "task_watchdog";
+  case ESP_RST_WDT: return "other_watchdog";
+  case ESP_RST_DEEPSLEEP: return "deep_sleep";
+  case ESP_RST_BROWNOUT: return "brownout";
+  case ESP_RST_SDIO: return "sdio";
+  default: return "unknown";
+  }
+}
 
 #ifndef TIMECODE_HOLD_MS
 #define TIMECODE_HOLD_MS 500
@@ -115,6 +132,9 @@ void setup() {
   delay(500);
   Serial.println();
   Serial.printf("LED Timecode Sync v%s\n", FIRMWARE_VERSION);
+  const esp_reset_reason_t reset_reason = esp_reset_reason();
+  Serial.printf("Reset reason: %s (%d)\n", resetReasonName(reset_reason),
+                static_cast<int>(reset_reason));
   Serial.printf("Chip: %s @ %u MHz, LED_COUNT_MAX=%u, LED_DATA_GPIO=%d, default_led_type=WS2811\n",
                 ESP.getChipModel(), ESP.getCpuFreqMHz(), LED_COUNT_MAX,
                 LED_DATA_GPIO);
@@ -158,16 +178,18 @@ static void applySerialPendingAction(const SerialPendingAction &action) {
   if (!action.pending) return;
 
   g_timeline.setConfig(&g_config);
+  // Brightness does not require rebuilding FastLED controllers, so apply it
+  // immediately whenever a new Config is accepted over Serial.
+  g_leds.setMaxBrightness(g_config.hardware.max_brightness);
 
   if (action.network_changed) {
+    // Must NOT block here — Studio often uploads config right after setWifi.
+    // Blocking WiFi.connect() starves Serial and causes "Serial command timeout".
     g_state = STATE_WIFI_CONNECTING;
-    if (g_wifi.reconnect(g_config.network)) {
-      startNetworkServices();
-      Serial.println("[app] WiFi reconnected after serial update");
-    } else {
-      g_wifi_was_connected = false;
-      Serial.println("[app] WiFi reconnect failed after serial update");
-    }
+    g_wifi_was_connected = false;
+    g_last_wifi_retry_ms = millis();
+    g_wifi.beginConnect(g_config.network);
+    Serial.println("[app] WiFi reconnect started in background after serial update");
   }
 }
 
@@ -189,16 +211,18 @@ void loop() {
     }
     if (now_ms - g_last_wifi_retry_ms >= WIFI_RETRY_INTERVAL_MS) {
       g_last_wifi_retry_ms = now_ms;
-      Serial.printf("[wifi] retrying '%s'...\n", g_config.network.ssid);
-      if (g_wifi.reconnect(g_config.network)) {
-        startNetworkServices();
-        Serial.println("[wifi] reconnect OK");
-      } else {
-        Serial.println("[wifi] reconnect failed");
-      }
+      // Non-blocking retry so Serial / UDP keep running during join
+      g_wifi.beginConnect(g_config.network);
     }
   } else {
+    if (!g_wifi_was_connected) {
+      startNetworkServices();
+      Serial.println("[wifi] connected");
+    }
     g_wifi_was_connected = true;
+    if (g_state == STATE_WIFI_CONNECTING) {
+      g_state = STATE_WAIT_TIMECODE;
+    }
   }
 
   if (now_ms - g_last_health_log_ms >= HEALTH_LOG_INTERVAL_MS) {

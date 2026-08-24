@@ -1,17 +1,67 @@
-import type { PartDefinition } from './types/project'
+import type { LedOutputDefinition, PartDefinition } from './types/project'
 
-/** 單條 WS2812 串聯接線順序：身體 → 頭部 → 左手 → 右手 → 左腳 → 右腳 */
+/** 五個 WS2812B 輸出依舞者本人視角的編排順序。 */
 export const CHAIN_WIRING_ORDER_HINT =
-  '身體 → 頭部 → 左手 → 右手 → 左腳 → 右腳'
+  '帽子 → 右手 → 右腳 → 左腳 → 左手（舞者本人視角）'
 
-export const DEFAULT_CHAIN_PARTS: PartDefinition[] = [
-  { id: 'body', display_name: '身體', ranges: [{ start: 0, end: 19 }] },
-  { id: 'head', display_name: '頭部', ranges: [{ start: 20, end: 39 }] },
-  { id: 'left_hand', display_name: '左手', ranges: [{ start: 40, end: 59 }] },
-  { id: 'right_hand', display_name: '右手', ranges: [{ start: 60, end: 79 }] },
-  { id: 'left_foot', display_name: '左腳', ranges: [{ start: 80, end: 99 }] },
-  { id: 'right_foot', display_name: '右腳', ranges: [{ start: 100, end: 119 }] }
+export const DEFAULT_LED_OUTPUTS: LedOutputDefinition[] = [
+  {
+    id: 'hat', display_name: '帽子', part_id: 'head', gpio: 4, layout: 'ring',
+    outbound_leds: 60, parallel_branches: 1, branch_leds: 0, return_leds: 0,
+    continuation_branch: 1, direction: 'clockwise'
+  },
+  {
+    id: 'right_arm', display_name: '右手', part_id: 'right_hand', gpio: 5,
+    layout: 'branched_limb', outbound_leds: 60, parallel_branches: 5,
+    branch_leds: 10, return_leds: 60, continuation_branch: 5, direction: 'out_and_back'
+  },
+  {
+    id: 'right_leg', display_name: '右腳', part_id: 'right_foot', gpio: 6,
+    layout: 'branched_limb', outbound_leds: 60, parallel_branches: 5,
+    branch_leds: 10, return_leds: 60, continuation_branch: 5, direction: 'out_and_back'
+  },
+  {
+    id: 'left_leg', display_name: '左腳', part_id: 'left_foot', gpio: 7,
+    layout: 'branched_limb', outbound_leds: 60, parallel_branches: 5,
+    branch_leds: 10, return_leds: 60, continuation_branch: 5, direction: 'out_and_back'
+  },
+  {
+    id: 'left_arm', display_name: '左手', part_id: 'left_hand', gpio: 15,
+    layout: 'branched_limb', outbound_leds: 60, parallel_branches: 5,
+    branch_leds: 10, return_leds: 60, continuation_branch: 5, direction: 'out_and_back'
+  }
 ]
+
+export function logicalLedCountForOutput(output: LedOutputDefinition): number {
+  return Math.max(0, output.outbound_leds) + Math.max(0, output.branch_leds) +
+    Math.max(0, output.return_leds)
+}
+
+export function physicalLedCountForOutput(output: LedOutputDefinition): number {
+  return Math.max(0, output.outbound_leds) +
+    Math.max(1, output.parallel_branches) * Math.max(0, output.branch_leds) +
+    Math.max(0, output.return_leds)
+}
+
+export function cloneDefaultLedOutputs(): LedOutputDefinition[] {
+  return DEFAULT_LED_OUTPUTS.map((output) => ({ ...output }))
+}
+
+export function partsFromLedOutputs(outputs: LedOutputDefinition[]): PartDefinition[] {
+  let offset = 0
+  return outputs.map((output) => {
+    const count = logicalLedCountForOutput(output)
+    const part = {
+      id: output.part_id,
+      display_name: output.display_name,
+      ranges: [{ start: offset, end: offset + Math.max(1, count) - 1 }]
+    }
+    offset += Math.max(1, count)
+    return part
+  })
+}
+
+export const DEFAULT_CHAIN_PARTS: PartDefinition[] = partsFromLedOutputs(DEFAULT_LED_OUTPUTS)
 
 export function cloneDefaultChainParts(): PartDefinition[] {
   return DEFAULT_CHAIN_PARTS.map((p) => ({

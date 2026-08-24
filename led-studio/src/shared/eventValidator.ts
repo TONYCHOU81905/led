@@ -1,4 +1,4 @@
-import { computeLedCountFromParts } from './ledChainDefaults'
+import { computeLedCountFromParts, logicalLedCountForOutput, partsFromLedOutputs } from './ledChainDefaults'
 import { parseTimeToMs } from './timeParse'
 import type {
   DeviceConfig,
@@ -23,6 +23,7 @@ export interface ValidationResult {
 }
 
 const SUPPORTED_SCHEMA = '1.0.0'
+const SUPPORTED_LED_GPIOS = new Set([4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 21])
 
 function validatePartRanges(parts: PartDefinition[], ledCount: number, errors: ValidationIssue[]): void {
   const seen = new Set<string>()
@@ -123,6 +124,39 @@ export function validateRole(role: RoleDefinition, colors: Record<string, RgbCol
 
   validatePartRanges(role.parts, computeLedCountFromParts(role.parts), errors)
 
+  if (role.led_outputs) {
+    if (role.led_outputs.length < 1 || role.led_outputs.length > 5) {
+      errors.push({ code: 'INVALID_OUTPUT_COUNT', message: 'LED outputs must contain 1 to 5 channels' })
+    }
+    const gpios = new Set<number>()
+    for (const output of role.led_outputs) {
+      if (!SUPPORTED_LED_GPIOS.has(output.gpio)) {
+        errors.push({ code: 'UNSUPPORTED_GPIO', message: `Unsupported LED GPIO: ${output.gpio}` })
+      }
+      if (gpios.has(output.gpio)) {
+        errors.push({ code: 'DUPLICATE_GPIO', message: `Duplicate LED GPIO: ${output.gpio}` })
+      }
+      gpios.add(output.gpio)
+      if (logicalLedCountForOutput(output) < 1) {
+        errors.push({ code: 'EMPTY_OUTPUT', message: `LED output ${output.id} has no logical pixels` })
+      }
+      if (output.parallel_branches < 1 || output.parallel_branches > 5) {
+        errors.push({ code: 'INVALID_BRANCH_COUNT', message: `LED output ${output.id} must have 1 to 5 branches` })
+      }
+      if (output.continuation_branch < 1 || output.continuation_branch > output.parallel_branches) {
+        errors.push({ code: 'INVALID_CONTINUATION', message: `LED output ${output.id} continuation branch is invalid` })
+      }
+    }
+    const expectedParts = partsFromLedOutputs(role.led_outputs)
+    if (JSON.stringify(expectedParts) !== JSON.stringify(role.parts)) {
+      errors.push({ code: 'OUTPUT_PART_MISMATCH', message: 'LED output parameters and part ranges are out of sync' })
+    }
+    const total = role.led_outputs.reduce((sum, output) => sum + logicalLedCountForOutput(output), 0)
+    if (total > 640) {
+      errors.push({ code: 'LED_LIMIT_EXCEEDED', message: `Logical LED count ${total} exceeds firmware limit 640` })
+    }
+  }
+
   for (const event of role.events) {
     if (eventIds.has(event.id)) {
       errors.push({
@@ -137,6 +171,25 @@ export function validateRole(role: RoleDefinition, colors: Record<string, RgbCol
     const eventIssues = validateEvent(event, partIds, colors)
     for (const issue of eventIssues) {
       errors.push({ ...issue, roleId: role.role_id })
+    }
+    const routeParts = event.params?.route_parts
+    if (routeParts && routeParts.length > 8) {
+      errors.push({
+        code: 'TOO_MANY_ROUTE_PARTS',
+        message: `Event ${event.id}: route contains ${routeParts.length} steps; firmware supports at most 8`,
+        eventId: event.id,
+        roleId: role.role_id
+      })
+    }
+    for (const routePart of routeParts ?? []) {
+      if (!partIds.has(routePart)) {
+        errors.push({
+          code: 'UNKNOWN_ROUTE_PART',
+          message: `Event ${event.id}: unknown route part "${routePart}"`,
+          eventId: event.id,
+          roleId: role.role_id
+        })
+      }
     }
   }
 
