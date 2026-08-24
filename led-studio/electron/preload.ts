@@ -17,6 +17,10 @@ const api: LedStudioApi = {
       ipcRenderer.invoke('project:saveFile', project, existingPath) as Promise<
         import('../src/shared/types/project').SaveProjectResult
       >,
+    saveAsBundle: (project: import('../src/shared/types/project').LedProject) =>
+      ipcRenderer.invoke('project:saveAsBundle', project) as Promise<
+        import('../src/shared/types/project').SaveProjectResult
+      >,
     saveDeviceConfig: (config: DeviceConfig, suggestedName?: string) =>
       ipcRenderer.invoke('project:saveDeviceConfig', config, suggestedName) as Promise<boolean>,
     openDeviceConfig: () => ipcRenderer.invoke('project:openDeviceConfig') as Promise<DeviceConfig | null>,

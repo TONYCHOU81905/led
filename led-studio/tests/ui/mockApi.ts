@@ -52,6 +52,11 @@ export function createMockApi(): MockApi {
         filePath: existingPath ?? `/tmp/${project.project.name}.ledproj.json`,
         project
       })),
+      saveAsBundle: vi.fn(async (project: LedProject) => ({
+        ok: true,
+        filePath: `/tmp/${project.project.name}/${project.project.name}.ledproj.json`,
+        project
+      })),
       saveDeviceConfig: vi.fn(async () => true),
       openDeviceConfig: vi.fn(async () => null),
       pickMusicFile: vi.fn(async () => ({ path: '/tmp/test-track.mp3' })),

@@ -258,10 +258,8 @@ interface DancerFigureSvgProps {
   regionPixels: Record<FigureRegionId, ResolvedColor[]>
   /** 只畫這些 region；省略時畫全部（向後相容） */
   visibleRegions?: FigureRegionId[]
-  /** 顯示整體流動示意（淡色路徑 + 跑動光點 + 段落序號） */
+  /** 顯示整體流動示意（淡色路徑 + 段落序號） */
   showFlowGuide?: boolean
-  /** 光點跑完一圈的時間，毫秒；預設 3000 */
-  flowDurationMs?: number
   className?: string
   title?: string
 }
@@ -270,7 +268,6 @@ export function DancerFigureSvg({
   regionPixels,
   visibleRegions,
   showFlowGuide,
-  flowDurationMs = 3000,
   className,
   title
 }: DancerFigureSvgProps) {
@@ -327,11 +324,6 @@ export function DancerFigureSvg({
               </text>
             </g>
           ))}
-          <circle r="1.8" fill="#f8fafc" opacity="0.9">
-            <animateMotion dur={`${flowDurationMs}ms`} repeatCount="indefinite">
-              <mpath href={`#${flowPathId}`} />
-            </animateMotion>
-          </circle>
         </g>
       )}
 

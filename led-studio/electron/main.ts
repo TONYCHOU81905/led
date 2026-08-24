@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { join, isAbsolute } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, writeFile, stat } from 'node:fs/promises'
 import { flashFirmware } from './services/flasher'
 import { espStatusListener, type EspDeviceStatus } from './services/espStatusListener'
 import { ltcSidecar } from './services/ltcSidecar'
@@ -16,7 +16,14 @@ import {
 import { timecodeBridge } from './services/timecodeBridge'
 import { loadOrBuildWaveformCache } from './services/waveformCache'
 import { resolveAppResource } from './utils/paths'
-import { openProjectFromFile, readProjectFile, saveProjectToFile } from './services/projectBundle'
+import {
+  findProjectJsonInDir,
+  openProjectFromFile,
+  readProjectFile,
+  saveProjectToDir,
+  saveProjectToFile
+} from './services/projectBundle'
+import { isBundledProjectPath, sanitizeProjectFileName } from '../src/shared/projectBundle'
 import type { FlashBoardId } from '../src/shared/boardTargets'
 import type { BridgeOptions, DeviceConfig, LedProject } from '../src/shared/types/project'
 
@@ -29,6 +36,29 @@ export interface SaveProjectResult {
   ok: boolean
   filePath?: string
   project?: LedProject
+  canUpgradeToBundle?: boolean
+}
+
+/** 剝掉 macOS showSaveDialog 可能自動補上的副檔名，把回傳路徑當成資料夾名稱使用。 */
+function stripAccidentalExtension(dirPath: string): string {
+  if (dirPath.toLowerCase().endsWith('.ledproj.json')) {
+    return dirPath.slice(0, -'.ledproj.json'.length)
+  }
+  if (dirPath.toLowerCase().endsWith('.json')) {
+    return dirPath.slice(0, -'.json'.length)
+  }
+  return dirPath
+}
+
+async function pickProjectBundleDir(project: LedProject): Promise<string | null> {
+  const result = await dialog.showSaveDialog({
+    title: '儲存專案資料夾',
+    defaultPath: sanitizeProjectFileName(project.project.name),
+    buttonLabel: '建立專案資料夾',
+    properties: ['createDirectory']
+  })
+  if (result.canceled || !result.filePath) return null
+  return stripAccidentalExtension(result.filePath)
 }
 
 const knownBridgeTargets = new Set<string>()
@@ -132,10 +162,20 @@ app.whenReady().then(() => {
   ipcMain.handle('project:openFile', async (): Promise<OpenProjectResult | null> => {
     const result = await dialog.showOpenDialog({
       filters: [{ name: 'LED Project', extensions: ['json', 'ledproj.json'] }],
-      properties: ['openFile']
+      properties: ['openFile', 'openDirectory']
     })
     if (result.canceled || !result.filePaths[0]) return null
-    const filePath = result.filePaths[0]
+    let filePath = result.filePaths[0]
+
+    const stats = await stat(filePath)
+    if (stats.isDirectory()) {
+      const found = await findProjectJsonInDir(filePath)
+      if (!found) {
+        throw new Error('這個資料夾裡找不到專案檔（*.ledproj.json）')
+      }
+      filePath = found
+    }
+
     const project = await readProjectFile(filePath)
     return { project, filePath }
   })
@@ -143,16 +183,29 @@ app.whenReady().then(() => {
   ipcMain.handle(
     'project:saveFile',
     async (_event, project: LedProject, existingPath?: string): Promise<SaveProjectResult> => {
-      let filePath = existingPath
-      if (!filePath) {
-        const result = await dialog.showSaveDialog({
-          filters: [{ name: 'LED Project', extensions: ['ledproj.json'] }],
-          defaultPath: `${project.project.name}.ledproj.json`
-        })
-        if (result.canceled || !result.filePath) return { ok: false }
-        filePath = result.filePath
+      if (existingPath) {
+        const saved = await saveProjectToFile(existingPath, project)
+        return {
+          ok: true,
+          filePath: existingPath,
+          project: saved,
+          canUpgradeToBundle: !isBundledProjectPath(existingPath)
+        }
       }
-      const saved = await saveProjectToFile(filePath, project)
+
+      const dirPath = await pickProjectBundleDir(project)
+      if (!dirPath) return { ok: false }
+      const { filePath, project: saved } = await saveProjectToDir(dirPath, project)
+      return { ok: true, filePath, project: saved }
+    }
+  )
+
+  ipcMain.handle(
+    'project:saveAsBundle',
+    async (_event, project: LedProject): Promise<SaveProjectResult> => {
+      const dirPath = await pickProjectBundleDir(project)
+      if (!dirPath) return { ok: false }
+      const { filePath, project: saved } = await saveProjectToDir(dirPath, project)
       return { ok: true, filePath, project: saved }
     }
   )

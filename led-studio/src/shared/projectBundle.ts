@@ -76,6 +76,46 @@ export function relativizeMusicPath(
   return trimmed
 }
 
+/** 檔名安全化：移除 / \ : * ? " < > | 與控制字元，trim；結果為空時回 'project' */
+export function sanitizeProjectFileName(name: string): string {
+  // eslint-disable-next-line no-control-regex
+  const cleaned = name.replace(/[/\\:*?"<>|\x00-\x1f]/g, '').trim()
+  return cleaned.length > 0 ? cleaned : 'project'
+}
+
+/** 專案資料夾內的 json 檔名，例如 '5P' → '5P.ledproj.json' */
+export function projectJsonFileName(projectName: string): string {
+  return `${sanitizeProjectFileName(projectName)}.ledproj.json`
+}
+
+/** 由專案資料夾路徑推出 json 完整路徑 */
+export function projectFilePathForDir(dirPath: string, projectName: string): string {
+  return joinProjectPath(dirPath, projectJsonFileName(projectName))
+}
+
+/**
+ * 判斷某個 json 路徑是否已經在「同名專案資料夾」結構裡。
+ * 判定方式：basename 去掉 '.ledproj.json'（或 '.json'）後，等於它所在資料夾的名稱。
+ */
+export function isBundledProjectPath(projectFilePath: string): boolean {
+  const normalized = projectFilePath.replace(/\\/g, '/').replace(/\/$/, '')
+  const lastSlash = normalized.lastIndexOf('/')
+  if (lastSlash === -1) return false
+  const fileName = normalized.slice(lastSlash + 1)
+  const parentPath = normalized.slice(0, lastSlash)
+  const parentSlash = parentPath.lastIndexOf('/')
+  const parentName = parentSlash === -1 ? parentPath : parentPath.slice(parentSlash + 1)
+
+  let baseName = fileName
+  if (baseName.toLowerCase().endsWith('.ledproj.json')) {
+    baseName = baseName.slice(0, -'.ledproj.json'.length)
+  } else if (baseName.toLowerCase().endsWith('.json')) {
+    baseName = baseName.slice(0, -'.json'.length)
+  }
+
+  return baseName.length > 0 && baseName === parentName
+}
+
 export function projectBundleSummary(project: LedProject): {
   roleCount: number
   eventCount: number

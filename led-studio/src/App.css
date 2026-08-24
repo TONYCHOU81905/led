@@ -655,8 +655,9 @@ body {
 }
 
 .dancer-preview-panel {
-  flex: 0 0 200px;
-  width: 200px;
+  flex: 0 0 240px;
+  width: 240px;
+  min-width: 240px;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
@@ -731,11 +732,17 @@ body {
   font-weight: 600;
   color: #cbd5e1;
   letter-spacing: 0.02em;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .dancer-preview-time {
   font: 600 0.78rem ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
   color: #f472b6;
+  min-width: 3.6rem;
+  text-align: right;
+  flex-shrink: 0;
 }
 
 .dancer-preview-select-label {
@@ -756,11 +763,21 @@ body {
   color: #e2e8f0;
 }
 
+.dancer-preview-hint-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
 .dancer-preview-hint {
   margin: 0;
   font-size: 0.68rem;
   color: #475569;
   line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .dancer-preview-single,
@@ -803,9 +820,11 @@ body {
 
 .dancer-preview-figure {
   width: 100%;
-  max-width: 76px;
+  max-width: 150px;
+  aspect-ratio: 100 / 130;
   height: auto;
   display: block;
+  flex-shrink: 0;
 }
 
 .dancer-preview-meta {
@@ -814,6 +833,10 @@ body {
   flex-direction: column;
   gap: 0.3rem;
   align-items: stretch;
+  min-height: 3.4rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .dancer-preview-effect {

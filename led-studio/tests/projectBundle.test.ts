@@ -2,11 +2,15 @@ import { describe, expect, it } from 'vitest'
 import { createDefaultShowProject } from '../src/shared/projectMutations'
 import {
   hydrateProjectMusicPath,
+  isBundledProjectPath,
   joinProjectPath,
   musicAssetFileName,
   projectBundleSummary,
   projectDirFromFilePath,
-  relativizeMusicPath
+  projectFilePathForDir,
+  projectJsonFileName,
+  relativizeMusicPath,
+  sanitizeProjectFileName
 } from '../src/shared/projectBundle'
 
 describe('projectBundle', () => {
@@ -47,5 +51,26 @@ describe('projectBundle', () => {
   it('joinProjectPath combines project dir and relative segment', () => {
     expect(joinProjectPath('/shows', 'music.mp3')).toBe('/shows/music.mp3')
     expect(projectDirFromFilePath('/shows/MyShow.ledproj.json')).toBe('/shows')
+  })
+
+  it('sanitizeProjectFileName strips unsafe characters and trims', () => {
+    expect(sanitizeProjectFileName('5P')).toBe('5P')
+    expect(sanitizeProjectFileName('my/proj:name*?"<>|')).toBe('myprojname')
+    expect(sanitizeProjectFileName('   ')).toBe('project')
+    expect(sanitizeProjectFileName('  5P  ')).toBe('5P')
+  })
+
+  it('projectJsonFileName appends .ledproj.json to sanitized name', () => {
+    expect(projectJsonFileName('5P')).toBe('5P.ledproj.json')
+  })
+
+  it('projectFilePathForDir joins dir and json file name', () => {
+    expect(projectFilePathForDir('/a/b/5P', '5P')).toBe('/a/b/5P/5P.ledproj.json')
+  })
+
+  it('isBundledProjectPath detects bundle folder structure', () => {
+    expect(isBundledProjectPath('/a/5P/5P.ledproj.json')).toBe(true)
+    expect(isBundledProjectPath('/Users/x/Desktop/5P.ledproj.json')).toBe(false)
+    expect(isBundledProjectPath('C:\\proj\\5P\\5P.ledproj.json')).toBe(true)
   })
 })

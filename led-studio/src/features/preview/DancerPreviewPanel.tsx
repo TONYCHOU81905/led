@@ -130,15 +130,6 @@ export function DancerPreviewPanel({ project, playheadMs, activeRoleId, onClose 
         <h3>燈光預覽</h3>
         <div className="dancer-preview-header-actions">
           <span className="dancer-preview-time">{formatMsToTime(playheadMs)}</span>
-          <button
-            type="button"
-            className="dancer-preview-flow-toggle"
-            aria-pressed={showFlowGuide}
-            onClick={() => setShowFlowGuide((v) => !v)}
-            title="切換流動示意"
-          >
-            流動示意
-          </button>
           {onClose && (
             <button
               type="button"
@@ -169,7 +160,18 @@ export function DancerPreviewPanel({ project, playheadMs, activeRoleId, onClose 
         </select>
       </label>
 
-      <p className="dancer-preview-hint">跟隨播放進度 · 暗色為未亮燈</p>
+      <div className="dancer-preview-hint-row">
+        <p className="dancer-preview-hint">跟隨播放進度 · 暗色為未亮燈</p>
+        <button
+          type="button"
+          className="dancer-preview-flow-toggle"
+          aria-pressed={showFlowGuide}
+          onClick={() => setShowFlowGuide((v) => !v)}
+          title="切換流動示意"
+        >
+          流動示意
+        </button>
+      </div>
 
       <div
         className={

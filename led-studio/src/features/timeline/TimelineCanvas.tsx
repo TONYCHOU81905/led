@@ -703,7 +703,7 @@ export function TimelineCanvas(props: TimelineCanvasProps) {
     <div
       ref={containerRef}
       className="timeline-canvas-wrap"
-      style={{ flex: 'none', height: contentH, overflow: 'auto' }}
+      style={{ flex: '1 1 auto', height: contentH, overflow: 'auto' }}
     >
       <canvas
         ref={canvasRef}

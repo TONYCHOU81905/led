@@ -260,6 +260,7 @@ export interface SaveProjectResult {
   ok: boolean
   filePath?: string
   project?: LedProject
+  canUpgradeToBundle?: boolean
 }
 
 
@@ -268,6 +269,7 @@ export interface LedStudioApi {
     openDemo(): Promise<LedProject>
     openFile(): Promise<OpenProjectResult | null>
     saveFile(project: LedProject, existingPath?: string): Promise<SaveProjectResult>
+    saveAsBundle(project: LedProject): Promise<SaveProjectResult>
     saveDeviceConfig(config: DeviceConfig, suggestedName?: string): Promise<boolean>
     openDeviceConfig(): Promise<DeviceConfig | null>
     pickMusicFile(): Promise<{ path: string; durationMs?: number } | null>

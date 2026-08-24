@@ -35,15 +35,19 @@ export function DashboardPage() {
       return
     }
     setError(null)
-    const result = await window.api.project.openFile()
-    if (!result) return
-    setProject(result.project, result.filePath)
-    const summary = projectBundleSummary(result.project)
-    setNotice(
-      `已開啟「${result.project.project.name}」：` +
-        `${summary.roleCount} 位舞者 · ${summary.eventCount} 個 clip · ` +
-        `${summary.partCount} 個 LED 節點 · 音檔 ${summary.hasMusic ? '已載入' : '未設定'}`
-    )
+    try {
+      const result = await window.api.project.openFile()
+      if (!result) return
+      setProject(result.project, result.filePath)
+      const summary = projectBundleSummary(result.project)
+      setNotice(
+        `已開啟「${result.project.project.name}」：` +
+          `${summary.roleCount} 位舞者 · ${summary.eventCount} 個 clip · ` +
+          `${summary.partCount} 個 LED 節點 · 音檔 ${summary.hasMusic ? '已載入' : '未設定'}`
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
   }
 
   const handleNewProject = (name: string) => {
@@ -58,7 +62,7 @@ export function DashboardPage() {
       <h1>Dashboard</h1>
       <p className="hint">
         請用 <strong>Electron 視窗</strong>操作（終端機執行 <code>npm run dev</code>）。瀏覽器開 localhost 僅供預覽，Devices
-        與檔案對話框無法使用。
+        與檔案對話框無法使用。「開啟專案」可選整個專案資料夾（含音檔），也可以選單一 .ledproj.json 檔案。
       </p>
 
       {error && <p className="error-banner">{error}</p>}
@@ -75,7 +79,7 @@ export function DashboardPage() {
               {loadingDemo ? '載入中…' : '載入範例專案'}
             </button>
             <button type="button" className="btn" onClick={() => void handleOpenProject()}>
-              開啟專案（.ledproj.json）
+              開啟專案（資料夾或 .ledproj.json）
             </button>
           </div>
         </div>

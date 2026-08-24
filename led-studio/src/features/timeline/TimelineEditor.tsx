@@ -413,7 +413,14 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
 
   const setPlayheadFromProgress = (ms: number) => {
     setPlayhead(ms)
-    if (followEnabledRef.current) followPlayhead(ms, workspaceWidth, zoomRef.current)
+    if (followEnabledRef.current) {
+      followPlayhead(ms, workspaceWidth, zoomRef.current)
+      return
+    }
+    // 拖動 playhead 到可見範圍邊緣（左右各 10%）或超出範圍時，即使沒開「跟隨播放」也要自動捲動進來
+    const edgeMs = visibleMs * 0.1
+    const nearOrOutside = ms < scrollMs + edgeMs || ms > scrollMs + visibleMs - edgeMs
+    if (nearOrOutside) followPlayhead(ms, workspaceWidth, zoomRef.current)
   }
 
   const enableFollow = () => {
@@ -633,18 +640,6 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
 
       <div className="timeline-editor-body">
         <div className="timeline-editor-main">
-          <div className="transport-progress-row">
-            <input
-              type="range"
-              min={0}
-              max={Math.max(1, durationMs)}
-              value={Math.min(playheadMs, durationMs)}
-              onChange={(e) => setPlayheadFromProgress(Number(e.target.value))}
-              className="transport-progress"
-              title="播放進度"
-            />
-          </div>
-
           <input
             type="range"
             min={0}
@@ -659,6 +654,18 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
             className="timeline-scrubber"
             title="Timeline 水平捲動"
           />
+
+          <div className="transport-progress-row">
+            <input
+              type="range"
+              min={0}
+              max={Math.max(1, durationMs)}
+              value={Math.min(playheadMs, durationMs)}
+              onChange={(e) => setPlayheadFromProgress(Number(e.target.value))}
+              className="transport-progress"
+              title="播放進度"
+            />
+          </div>
 
           <div className="timeline-workspace" ref={workspaceRef}>
             <TimelineCanvas

@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join, isAbsolute } from 'node:path'
 import type { LedProject } from '../../src/shared/types/project'
@@ -7,6 +7,7 @@ import {
   joinProjectPath,
   musicAssetFileName,
   projectDirFromFilePath,
+  projectFilePathForDir,
   relativizeMusicPath
 } from '../../src/shared/projectBundle'
 import { resolveAppResource } from '../utils/paths'
@@ -95,4 +96,42 @@ export async function saveProjectToFile(
 export async function readProjectFile(projectFilePath: string): Promise<LedProject> {
   const raw = await readFile(projectFilePath, 'utf-8')
   return openProjectFromFile(projectFilePath, raw)
+}
+
+/**
+ * 在 dirPath 建立/更新專案資料夾：mkdir -p、寫入 <name>.ledproj.json、
+ * 複製音檔進去。內部重用既有的 saveProjectToFile。
+ */
+export async function saveProjectToDir(
+  dirPath: string,
+  project: LedProject
+): Promise<{ filePath: string; project: LedProject }> {
+  await mkdir(dirPath, { recursive: true })
+  const filePath = projectFilePathForDir(dirPath, project.project.name)
+  const saved = await saveProjectToFile(filePath, project)
+  return { filePath, project: saved }
+}
+
+/** 在資料夾裡找專案 json：優先同名的 <dir>.ledproj.json，否則第一個 *.ledproj.json，再否則第一個 *.json。找不到回 null */
+export async function findProjectJsonInDir(dirPath: string): Promise<string | null> {
+  const entries = await readdir(dirPath, { withFileTypes: true })
+  const files = entries.filter((entry) => entry.isFile()).map((entry) => entry.name)
+
+  const dirName = dirPath.replace(/\\/g, '/').replace(/\/$/, '').split('/').pop() ?? ''
+  const preferredName = `${dirName}.ledproj.json`
+  if (files.includes(preferredName)) {
+    return join(dirPath, preferredName)
+  }
+
+  const ledprojFile = files.find((name) => name.toLowerCase().endsWith('.ledproj.json'))
+  if (ledprojFile) {
+    return join(dirPath, ledprojFile)
+  }
+
+  const jsonFile = files.find((name) => name.toLowerCase().endsWith('.json'))
+  if (jsonFile) {
+    return join(dirPath, jsonFile)
+  }
+
+  return null
 }
