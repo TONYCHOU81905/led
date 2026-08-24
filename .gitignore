@@ -9,3 +9,13 @@ led-studio/node_modules/
 led-studio/out/
 led-studio/dist/
 led-studio/release/
+
+# macOS
+.DS_Store
+
+# 產生物：waveform 快取（由 electron/services/waveformCache.ts 產生）
+.led-cache/
+
+# 本地測試素材，不入庫（檔案仍留在工作目錄）
+music.mp3
+*.mp3
