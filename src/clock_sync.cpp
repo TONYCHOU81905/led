@@ -35,7 +35,10 @@ void ClockSync::onStart(uint32_t music_time_ms, int64_t now_us) {
 }
 
 void ClockSync::onRunning(uint32_t music_time_ms, int64_t now_us) {
-  if (!_synced) {
+  if (!_synced || !_playing) {
+    // First packet after boot, or resume after PAUSE: re-anchor to the sender's
+    // time so playback continues from the paused position instead of staying
+    // frozen (onPause cleared _playing and nothing else restored it).
     applyHardSeek(music_time_ms, now_us);
     _playing = true;
     return;
@@ -66,7 +69,9 @@ void ClockSync::onSeek(uint32_t music_time_ms, int64_t now_us) {
 }
 
 void ClockSync::onPause(uint32_t music_time_ms, int64_t now_us) {
-  (void)now_us;
+  // Freeze the clock at the pause position; musicTimeMs() returns the anchor
+  // while not playing, and resume (RUNNING/SEEK) re-anchors from the sender.
+  applyHardSeek(music_time_ms, now_us);
   _playing = false;
   char show[16];
   formatShowTimeMmSs(music_time_ms, show, sizeof(show));
@@ -82,6 +87,7 @@ void ClockSync::onStop() {
 
 uint32_t ClockSync::musicTimeMs(int64_t now_us) const {
   if (!_synced) return 0;
+  if (!_playing) return _anchor_music_ms;
   const int64_t elapsed_us = now_us - _anchor_local_us;
   const int64_t t = static_cast<int64_t>(_anchor_music_ms) + elapsed_us / 1000 +
                     _drift_offset_ms;

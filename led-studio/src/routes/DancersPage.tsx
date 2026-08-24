@@ -1,7 +1,8 @@
 import { useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { STAGE_COLOR_NAMES, resolveColorCss } from '../shared/stageColors'
+import { STAGE_COLOR_NAMES, getStageColorLabel, resolveColorCss } from '../shared/stageColors'
 import { newEventId } from '../shared/projectMutations'
+import { EFFECT_OPTIONS, getEffectLabel } from '../shared/timelineEffects'
 import { useProjectStore } from '../stores/projectStore'
 
 export function DancersPage() {
@@ -171,7 +172,7 @@ export function DancersPage() {
                         >
                           {STAGE_COLOR_NAMES.map((c) => (
                             <option key={c} value={c}>
-                              {c}
+                              {getStageColorLabel(c)}
                             </option>
                           ))}
                         </select>
@@ -185,11 +186,11 @@ export function DancersPage() {
                             })
                           }
                         >
-                          <option value="solid">solid</option>
-                          <option value="blink">blink</option>
-                          <option value="fade_in">fade_in</option>
-                          <option value="fade_out">fade_out</option>
-                          <option value="off">off</option>
+                          {EFFECT_OPTIONS.map((option) => (
+                            <option key={option.id} value={option.id}>
+                              {getEffectLabel(option.id)}
+                            </option>
+                          ))}
                         </select>
                       </td>
                       <td>

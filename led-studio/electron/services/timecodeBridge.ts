@@ -6,6 +6,14 @@ export const TIMECODE_MAGIC = 0x4c544331 // 'LTC1'
 export const TIMECODE_PORT = 4210
 export const TIMECODE_RATE_HZ = 100
 
+export function interpolatePreviewTime(
+  externalTimeMs: number,
+  externalUpdatedAtMs: number,
+  nowMs: number
+): number {
+  return Math.max(0, externalTimeMs + Math.max(0, nowMs - externalUpdatedAtMs))
+}
+
 function msToMmSs(ms: number): string {
   const total = Math.round(ms / 1000)
   const m = Math.floor(total / 60)
@@ -164,6 +172,7 @@ export class TimecodeBridgeService {
   private packetTimestamps: number[] = []
   private listeners = new Set<(state: BridgeState) => void>()
   private externalTimeMs: number | null = null
+  private externalUpdatedAt = 0
 
   private debugLog(message: string): void {
     console.log(`[bridge] ${message}`)
@@ -210,6 +219,7 @@ export class TimecodeBridgeService {
     this.sequence = 0
     this.musicTimeMs = 0
     this.externalTimeMs = null
+    this.externalUpdatedAt = 0
     this.startedAt = Date.now()
     this.running = true
     this.paused = false
@@ -235,6 +245,7 @@ export class TimecodeBridgeService {
         this.debugLog('no known ESP unicast targets yet; broadcast only')
       }
       this.sendPacket(PacketType.START)
+      if (this.paused) this.sendPacket(PacketType.PAUSE)
       this.debugLog(`start source=${this.source}`)
     })
 
@@ -246,6 +257,7 @@ export class TimecodeBridgeService {
   /** Feed time from LTC sidecar or Studio preview playback. */
   setExternalTimeMs(ms: number): void {
     this.externalTimeMs = Math.max(0, ms)
+    this.externalUpdatedAt = Date.now()
     if (this.source === 'ltc' || this.source === 'preview') {
       this.musicTimeMs = this.externalTimeMs
       if (this.running) {
@@ -284,6 +296,9 @@ export class TimecodeBridgeService {
     this.paused = false
     if (this.source === 'manual') {
       this.startedAt = Date.now() - this.musicTimeMs
+    } else if (this.source === 'preview') {
+      this.externalTimeMs = this.musicTimeMs
+      this.externalUpdatedAt = Date.now()
     }
     this.sendPacket(PacketType.RUNNING)
     this.debugLog(`resume at music_ms=${this.musicTimeMs} (${msToMmSs(this.musicTimeMs)})`)
@@ -297,6 +312,7 @@ export class TimecodeBridgeService {
       this.startedAt = Date.now() - this.musicTimeMs
     } else if (this.source === 'preview' || this.source === 'ltc') {
       this.externalTimeMs = this.musicTimeMs
+      this.externalUpdatedAt = Date.now()
     }
     this.sendPacket(PacketType.SEEK)
     this.debugLog(`seek to music_ms=${this.musicTimeMs} (${msToMmSs(this.musicTimeMs)})`)
@@ -306,7 +322,13 @@ export class TimecodeBridgeService {
   private tick(): void {
     if (!this.running || this.paused) return
 
-    if ((this.source === 'ltc' || this.source === 'preview') && this.externalTimeMs !== null) {
+    if (this.source === 'preview' && this.externalTimeMs !== null) {
+      this.musicTimeMs = interpolatePreviewTime(
+        this.externalTimeMs,
+        this.externalUpdatedAt,
+        Date.now()
+      )
+    } else if (this.source === 'ltc' && this.externalTimeMs !== null) {
       this.musicTimeMs = this.externalTimeMs
     } else {
       const elapsed = Date.now() - this.startedAt

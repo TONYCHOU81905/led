@@ -25,7 +25,7 @@ const api: LedStudioApi = {
     getMusicFileUrl: (filePath: string) =>
       ipcRenderer.invoke('project:getMusicFileUrl', filePath) as Promise<string>,
     readMusicFile: (filePath: string) =>
-      ipcRenderer.invoke('project:readMusicFile', filePath) as Promise<{ data: Uint8Array; mime: string }>,
+      ipcRenderer.invoke('project:readMusicFile', filePath) as Promise<{ data: Uint8Array<ArrayBuffer>; mime: string }>,
     loadWaveformCache: (musicFilePath: string, projectFilePath?: string) =>
       ipcRenderer.invoke('project:loadWaveformCache', musicFilePath, projectFilePath)
   },

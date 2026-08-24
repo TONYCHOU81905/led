@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { LedProject } from '../../shared/types/project'
-import { STAGE_COLOR_NAMES, resolveColorCss } from '../../shared/stageColors'
+import { STAGE_COLOR_NAMES, getStageColorLabel, resolveColorCss } from '../../shared/stageColors'
 
 interface ColorSwatchSelectProps {
   value: string
@@ -31,7 +31,7 @@ export function ColorSwatchSelect({ value, colors, onChange }: ColorSwatchSelect
         aria-haspopup="listbox"
       >
         <span className="color-swatch-lg" style={{ background: resolveColorCss(value, colors) }} />
-        <span className="color-swatch-select-label">{value}</span>
+        <span className="color-swatch-select-label">{getStageColorLabel(value)}</span>
         <span className="color-swatch-select-caret" aria-hidden>
           ▾
         </span>
@@ -47,9 +47,9 @@ export function ColorSwatchSelect({ value, colors, onChange }: ColorSwatchSelect
                   onChange(name)
                   setOpen(false)
                 }}
-              >
+                >
                 <span className="color-swatch-chip" style={{ background: resolveColorCss(name, colors) }} />
-                <span>{name}</span>
+                <span>{getStageColorLabel(name)}</span>
               </button>
             </li>
           ))}

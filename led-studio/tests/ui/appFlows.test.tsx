@@ -162,6 +162,21 @@ describe('LED Show Studio UI flows (simulated clicks)', () => {
     expect(screen.getByRole('heading', { name: 'Timeline' })).toBeInTheDocument()
   })
 
+  it('Timeline: 拉動粉紅色進度會啟動 Bridge 並控制 ESP 時間', async () => {
+    const user = userEvent.setup()
+    const mock = getMockApi()
+    render(<App />)
+    await createProjectViaUi(user)
+    await user.click(sidebarLink('Timeline'))
+
+    const progress = document.querySelector('.transport-progress') as HTMLInputElement
+    fireEvent.change(progress, { target: { value: '5000' } })
+
+    await waitFor(() => expect(mock.api.show.bridgeStart).toHaveBeenCalledWith({ source: 'preview' }))
+    await waitFor(() => expect(mock.api.show.bridgeSeek).toHaveBeenCalledWith(5000))
+    expect(screen.getByRole('button', { name: 'LED 同步：開' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
   it('Devices: 掃描 port、Ping、上傳 config', async () => {
     const user = userEvent.setup()
     const mock = getMockApi()
@@ -182,8 +197,16 @@ describe('LED Show Studio UI flows (simulated clicks)', () => {
     await user.click(screen.getByRole('button', { name: '寫入 WiFi → NVS' }))
     await waitFor(() => expect(mock.api.device.setWifi).toHaveBeenCalled())
 
+    const brightness = screen.getByRole('spinbutton', { name: '亮度百分比' })
+    await user.clear(brightness)
+    await user.type(brightness, '40')
     await user.click(screen.getByRole('button', { name: '上傳 Config (Serial)' }))
-    await waitFor(() => expect(mock.api.device.uploadConfig).toHaveBeenCalled())
+    await waitFor(() => expect(mock.api.device.uploadConfig).toHaveBeenCalledWith(
+      '/dev/cu.usbserial-mock',
+      expect.objectContaining({
+        device: expect.objectContaining({ max_brightness: 0.4 })
+      })
+    ))
     expect(screen.getByText(/Ping ESP: OK/)).toBeInTheDocument()
   })
 
@@ -231,20 +254,19 @@ describe('LED Show Studio UI flows (simulated clicks)', () => {
     expect(screen.getByLabelText('音樂播放控制')).toBeInTheDocument()
   })
 
-  it('LED 串聯: 預設 6 節點可編輯', async () => {
+  it('LED 串聯: 預設 5 通道可分頁編輯', async () => {
     const user = userEvent.setup()
     render(<App />)
     await createProjectViaUi(user)
 
     await user.click(sidebarLink('LED 串聯'))
-    expect(screen.getByRole('heading', { name: 'LED 串聯節點' })).toBeInTheDocument()
-    expect(screen.getByText(/共 120 顆 LED/)).toBeInTheDocument()
-    expect(screen.getByDisplayValue('身體')).toBeInTheDocument()
-    expect(screen.getByDisplayValue('右腳')).toBeInTheDocument()
-
-    await user.click(screen.getByRole('button', { name: '+ 新增節點' }))
+    expect(screen.getByRole('heading', { name: 'LED 輸出與並聯配置' })).toBeInTheDocument()
+    expect(screen.getByText('580')).toBeInTheDocument()
+    expect(screen.getByText('740')).toBeInTheDocument()
+    await user.click(screen.getByRole('tab', { name: /通道 3右腳GPIO 6/ }))
+    expect(screen.getByLabelText('每根手指／腳趾燈數')).toHaveValue(10)
     const role = useProjectStore.getState().activeRole()
-    expect(role?.parts).toHaveLength(7)
+    expect(role?.led_outputs).toHaveLength(5)
   })
 
   it('Global toolbar: 儲存專案按鈕各頁可見', async () => {

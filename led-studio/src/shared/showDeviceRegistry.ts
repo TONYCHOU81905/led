@@ -18,6 +18,7 @@ export interface ShowDeviceRow {
   /** null = never received UDP status from this IP */
   udpReporting: boolean | null
   sync_state?: string
+  music_time_ms?: number
   drift_ms?: number
   rssi?: number
   battery_mv?: number
@@ -50,6 +51,7 @@ export function mergeShowDevices(
       registered: existing?.registered ?? false,
       udpReporting,
       sync_state: device.sync_state,
+      music_time_ms: device.music_time_ms,
       drift_ms: device.drift_ms,
       rssi: device.rssi,
       battery_mv: device.battery_mv

@@ -19,15 +19,15 @@ interface PortInfo {
 function buildConfigFromProject(
   project: NonNullable<ReturnType<typeof useProjectStore.getState>['project']>,
   roleId: string,
-  dataGpio: number,
   ledType: 'WS2811' | 'WS2812B',
+  maxBrightnessPercent: number,
   ssid: string,
   password: string
 ): DeviceConfig {
   return compileProjectRole(project, roleId, {
     ...defaultCompileOptions(roleId),
-    dataGpio,
     ledType,
+    maxBrightness: maxBrightnessPercent / 100,
     network: { ssid, password, timecode_port: 4210, device_status_port: 4211 }
   })
 }
@@ -40,8 +40,8 @@ export function DeviceManagerPage() {
   const [roleId, setRoleId] = useState(activeRoleId ?? '')
   const [ssid, setSsid] = useState('')
   const [password, setPassword] = useState('')
-  const [dataGpio, setDataGpio] = useState(8)
-  const [ledType, setLedType] = useState<'WS2811' | 'WS2812B'>('WS2811')
+  const [ledType, setLedType] = useState<'WS2811' | 'WS2812B'>('WS2812B')
+  const [maxBrightnessPercent, setMaxBrightnessPercent] = useState(25)
   const [loadedConfig, setLoadedConfig] = useState<DeviceConfig | null>(null)
   const [loadedConfigLabel, setLoadedConfigLabel] = useState<string | null>(null)
   const [flashBoardId, setFlashBoardId] = useState<FlashBoardId>(() => loadStoredFlashBoardId())
@@ -128,8 +128,20 @@ export function DeviceManagerPage() {
   }
 
   const resolveConfig = (): DeviceConfig => {
-    if (loadedConfig) return loadedConfig
-    return buildConfigFromProject(project, roleId, dataGpio, ledType, ssid, password)
+    if (loadedConfig) {
+      return {
+        ...loadedConfig,
+        device: { ...loadedConfig.device, max_brightness: maxBrightnessPercent / 100 }
+      }
+    }
+    return buildConfigFromProject(
+      project,
+      roleId,
+      ledType,
+      maxBrightnessPercent,
+      ssid,
+      password
+    )
   }
 
   const loadConfigFile = async () => {
@@ -141,6 +153,9 @@ export function DeviceManagerPage() {
       const config = await window.api.project.openDeviceConfig()
       if (!config) return
       setLoadedConfig(config)
+      const rawBrightness = Number(config.device.max_brightness)
+      const percent = rawBrightness <= 1 ? rawBrightness * 100 : (rawBrightness / 255) * 100
+      setMaxBrightnessPercent(Math.max(0, Math.min(100, Math.round(percent))))
       setLoadedConfigLabel(`${config.device.role_id} · ${config.events.length} events`)
       if (config.device.role_id) setRoleId(config.device.role_id)
       appendLog(`已載入 config 檔：${config.device.role_id}（${config.events.length} events）`)
@@ -161,7 +176,7 @@ export function DeviceManagerPage() {
     setFlashBoardId(id)
     storeFlashBoardId(id)
     const board = FLASH_BOARD_TARGETS.find((b) => b.id === id)
-    if (board) setDataGpio(board.defaultDataGpio)
+    if (board) appendLog(`燒錄板型已切換為 ${board.label}；LED GPIO 由「LED 串聯」管理`)
   }
 
   return (
@@ -241,14 +256,41 @@ export function DeviceManagerPage() {
         <label className="device-field">
           <span className="device-field-label">LED 燈條 IC</span>
           <select value={ledType} onChange={(e) => setLedType(e.target.value as 'WS2811' | 'WS2812B')}>
-            <option value="WS2811">WS2811（400 kHz，預設）</option>
-            <option value="WS2812B">WS2812B（800 kHz）</option>
+            <option value="WS2812B">WS2812B（5V / 800 kHz，預設）</option>
+            <option value="WS2811">WS2811（400 kHz）</option>
           </select>
         </label>
 
-        <label className="device-field">
+        <div className="device-field">
           <span className="device-field-label">LED GPIO</span>
-          <input type="number" value={dataGpio} onChange={(e) => setDataGpio(Number(e.target.value))} />
+          <span className="hint">由「LED 串聯」的 5 個通道設定管理</span>
+        </div>
+
+        <label className="device-field device-brightness-field">
+          <span className="device-field-label">全域最大亮度</span>
+          <div className="device-brightness-row">
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={1}
+              value={maxBrightnessPercent}
+              onChange={(e) => setMaxBrightnessPercent(Number(e.target.value))}
+              aria-label="全域最大亮度"
+            />
+            <input
+              type="number"
+              min={0}
+              max={100}
+              value={maxBrightnessPercent}
+              onChange={(e) => setMaxBrightnessPercent(
+                Math.max(0, Math.min(100, Math.round(Number(e.target.value) || 0)))
+              )}
+              aria-label="亮度百分比"
+            />
+            <span>%</span>
+          </div>
+          <span className="hint">限制整台 ESP 的輸出亮度；上傳 Config 後套用</span>
         </label>
       </div>
 
@@ -361,7 +403,7 @@ export function DeviceManagerPage() {
           disabled={busy || !effectivePort || !roleId || !ssid}
           onClick={() =>
             run('Deploy WiFi + Config', async () => {
-              await window.api.device.setWifi(effectivePort, ssid, password)
+              // Config first: WiFi write used to block ESP Serial for up to ~30s.
               const config = resolveConfig()
               const crc = configChecksum(config)
               appendLog(`config crc32: 0x${crc.toString(16)}`)
@@ -370,6 +412,8 @@ export function DeviceManagerPage() {
                 config as unknown as Record<string, unknown>
               )
               appendLog(JSON.stringify(res))
+              await window.api.device.setWifi(effectivePort, ssid, password)
+              appendLog('WiFi credentials saved (NVS); ESP connects in background')
             })
           }
         >

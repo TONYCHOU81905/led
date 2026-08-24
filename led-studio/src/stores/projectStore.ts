@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { LedProject, RoleDefinition, TimelineEventUI } from '../shared/types/project'
 import { repairProjectTimelineEvents } from '../shared/eventTimeRepair'
+import { migrateProjectToFiveOutputs } from '../shared/ledOutputMigration'
 import {
   addEvent,
   addRole,
@@ -32,8 +33,12 @@ interface ProjectState {
 }
 
 function loadProject(project: LedProject): { project: LedProject; lastRepairFixes: string[] } {
-  const { project: repaired, fixes } = repairProjectTimelineEvents(project)
-  return { project: repaired, lastRepairFixes: fixes }
+  const migrated = migrateProjectToFiveOutputs(project)
+  const repaired = repairProjectTimelineEvents(migrated.project)
+  return {
+    project: repaired.project,
+    lastRepairFixes: [...migrated.fixes, ...repaired.fixes]
+  }
 }
 
 export const useProjectStore = create<ProjectState>((set, get) => ({

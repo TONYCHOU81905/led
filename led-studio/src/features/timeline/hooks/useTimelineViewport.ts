@@ -1,6 +1,35 @@
 import { useCallback, useState } from 'react'
 import { HEADER_WIDTH, MAX_ZOOM, MIN_ZOOM } from '../utils/timeCoords'
 
+export function visibleTimelineMs(viewportWidthPx: number, zoomPxPerMs: number): number {
+  return Math.max(1, (Math.max(HEADER_WIDTH + 1, viewportWidthPx) - HEADER_WIDTH) / zoomPxPerMs)
+}
+
+export function maxTimelineScroll(
+  durationMs: number,
+  viewportWidthPx: number,
+  zoomPxPerMs: number
+): number {
+  return Math.max(0, durationMs - visibleTimelineMs(viewportWidthPx, zoomPxPerMs))
+}
+
+export function calculateFollowScroll(
+  previousScrollMs: number,
+  playheadMs: number,
+  durationMs: number,
+  viewportWidthPx: number,
+  zoomPxPerMs: number
+): number {
+  const visibleMs = visibleTimelineMs(viewportWidthPx, zoomPxPerMs)
+  const maxScroll = maxTimelineScroll(durationMs, viewportWidthPx, zoomPxPerMs)
+  const leftGuard = previousScrollMs + visibleMs * 0.12
+  const rightGuard = previousScrollMs + visibleMs * 0.74
+
+  if (playheadMs < leftGuard) return Math.max(0, Math.min(maxScroll, playheadMs - visibleMs * 0.12))
+  if (playheadMs > rightGuard) return Math.max(0, Math.min(maxScroll, playheadMs - visibleMs * 0.74))
+  return Math.max(0, Math.min(maxScroll, previousScrollMs))
+}
+
 export function useTimelineViewport(durationMs: number) {
   const [scrollMs, setScrollMs] = useState(0)
   const [zoomPxPerMs, setZoomPxPerMs] = useState(0.12)
@@ -42,18 +71,30 @@ export function useTimelineViewport(durationMs: number) {
 
   const followPlayhead = useCallback(
     (playheadMs: number, viewportWidthPx: number, zoom: number) => {
-      const visibleMs = (viewportWidthPx - HEADER_WIDTH) / zoom
-      const maxScroll = Math.max(0, durationMs - visibleMs)
-      const margin = visibleMs * 0.2
+      setScrollMs((prevScroll) =>
+        calculateFollowScroll(prevScroll, playheadMs, durationMs, viewportWidthPx, zoom)
+      )
+    },
+    [durationMs]
+  )
 
-      setScrollMs((prevScroll) => {
-        if (playheadMs < prevScroll + margin * 0.5) {
-          return Math.max(0, playheadMs - margin)
-        }
-        if (playheadMs > prevScroll + visibleMs - margin) {
-          return Math.min(maxScroll, playheadMs - visibleMs + margin)
-        }
-        return prevScroll
+  const centerPlayhead = useCallback(
+    (playheadMs: number, viewportWidthPx: number, zoom: number) => {
+      const visibleMs = visibleTimelineMs(viewportWidthPx, zoom)
+      const maxScroll = maxTimelineScroll(durationMs, viewportWidthPx, zoom)
+      setScrollMs(Math.max(0, Math.min(maxScroll, playheadMs - visibleMs * 0.5)))
+    },
+    [durationMs]
+  )
+
+  const zoomCenteredAt = useCallback(
+    (anchorMs: number, factor: number, viewportWidthPx: number) => {
+      setZoomPxPerMs((previousZoom) => {
+        const nextZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, previousZoom * factor))
+        const visibleMs = visibleTimelineMs(viewportWidthPx, nextZoom)
+        const maxScroll = maxTimelineScroll(durationMs, viewportWidthPx, nextZoom)
+        setScrollMs(Math.max(0, Math.min(maxScroll, anchorMs - visibleMs * 0.5)))
+        return nextZoom
       })
     },
     [durationMs]
@@ -75,6 +116,8 @@ export function useTimelineViewport(durationMs: number) {
     zoomAt,
     scrollTo,
     followPlayhead,
+    centerPlayhead,
+    zoomCenteredAt,
     resetViewport
   }
 }

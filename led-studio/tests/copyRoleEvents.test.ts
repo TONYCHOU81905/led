@@ -16,9 +16,8 @@ const demoParts: PartDefinition[] = [
 
 describe('resolveTargetsForRole', () => {
   it('keeps matching part ids', () => {
-    expect(resolveTargetsForRole(['head', 'body'], cloneDefaultChainParts())).toEqual([
-      'head',
-      'body'
+    expect(resolveTargetsForRole(['head', 'right_foot'], cloneDefaultChainParts())).toEqual([
+      'head', 'right_foot'
     ])
   })
 
@@ -87,7 +86,7 @@ describe('copyEventsFromRole', () => {
                 id: 'evt_a',
                 from: '00:00',
                 to: '00:05',
-                targets: ['body'],
+                targets: ['right_hand'],
                 color: 'red',
                 effect: 'solid',
                 priority: 1

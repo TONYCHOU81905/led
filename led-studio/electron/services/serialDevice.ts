@@ -24,10 +24,13 @@ export interface EspConfigUploadResult {
 
 type JsonPayload = Record<string, unknown>
 
-const COMMAND_TIMEOUT_MS = 30000
+const COMMAND_TIMEOUT_MS = 60000
 // ESP32 JSON command buffer is limited; large configs must use chunked upload.
 const SINGLE_CONFIG_LIMIT = 0
 const CHUNK_SIZE = 240
+const SETTLE_AFTER_WIFI_MS = 500
+const PING_RETRY_MS = 1500
+const PING_RETRY_COUNT = 12
 
 type SerialPortModule = typeof import('serialport')
 type ReadlineParserModule = typeof import('@serialport/parser-readline')
@@ -95,9 +98,11 @@ async function withOpenPort<T>(
     })
     const parser = port.pipe(new ReadlineParser({ delimiter: '\n' }))
     let pending: ((line: string) => void) | null = null
+    let commandDiagnostics: string[] = []
 
     const send = <R>(payload: JsonPayload): Promise<R> =>
       new Promise<R>((res, rej) => {
+        commandDiagnostics = []
         const timer = setTimeout(() => {
           pending = null
           rej(new Error('Serial command timeout'))
@@ -113,7 +118,8 @@ async function withOpenPort<T>(
           try {
             const parsed = JSON.parse(trimmed) as R & { ok?: boolean; error?: string }
             if (parsed && typeof parsed === 'object' && parsed.ok === false) {
-              rej(new Error(parsed.error ?? 'ESP error'))
+              const detail = commandDiagnostics.at(-1)
+              rej(new Error(detail ? `${parsed.error ?? 'ESP error'} — ${detail}` : parsed.error ?? 'ESP error'))
               return
             }
             res(parsed)
@@ -132,6 +138,11 @@ async function withOpenPort<T>(
       })
 
     const onData = (data: string) => {
+      const trimmed = data.trim()
+      if (trimmed.startsWith('[config]')) {
+        commandDiagnostics.push(trimmed)
+        if (commandDiagnostics.length > 8) commandDiagnostics.shift()
+      }
       if (pending) pending(data)
     }
 
@@ -164,6 +175,21 @@ export async function pingEsp(path: string): Promise<EspPingResponse> {
   return sendJsonCommand<EspPingResponse>(path, { cmd: 'ping' })
 }
 
+/** Wait until the ESP answers ping (e.g. after WiFi write used to block Serial). */
+export async function waitForEspReady(path: string): Promise<void> {
+  let lastError: Error | undefined
+  for (let i = 0; i < PING_RETRY_COUNT; i++) {
+    try {
+      await pingEsp(path)
+      return
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err))
+      await new Promise((r) => setTimeout(r, PING_RETRY_MS))
+    }
+  }
+  throw lastError ?? new Error('ESP not responding to ping')
+}
+
 export async function setEspWifi(path: string, ssid: string, password: string): Promise<{ ok: boolean }> {
   return sendJsonCommand<{ ok: boolean }>(path, { cmd: 'wifi', ssid, password })
 }
@@ -173,6 +199,10 @@ export async function uploadEspConfig(
   config: Record<string, unknown>
 ): Promise<EspConfigUploadResult> {
   const json = serializeConfigForTransport(config as unknown as DeviceConfig)
+
+  // Ensure ESP is answering before starting multi-chunk transfer (WiFi join must not block Serial).
+  await waitForEspReady(path)
+  await new Promise((r) => setTimeout(r, SETTLE_AFTER_WIFI_MS))
 
   if (json.length <= SINGLE_CONFIG_LIMIT) {
     return sendJsonCommand<EspConfigUploadResult>(path, { cmd: 'config', config })

@@ -1,10 +1,12 @@
-import { computeLedCountFromParts } from './ledChainDefaults'
+import { computeLedCountFromParts, logicalLedCountForOutput } from './ledChainDefaults'
 import { validateRole } from './eventValidator'
 import { mergePalette } from './stageColors'
 import { parseTimeToMs, formatMsToTime } from './timeParse'
+import { migrateRoleToFiveOutputs } from './ledOutputMigration'
 import type {
   CompiledEvent,
   DeviceConfig,
+  EffectId,
   LedProject,
   RoleDefinition,
   TimelineEventUI
@@ -38,6 +40,16 @@ export function compileEvent(event: TimelineEventUI): CompiledEvent {
   }
 }
 
+function mapEffectToDevice(
+  effect: EffectId,
+  params?: TimelineEventUI['params']
+): { effect: EffectId; params: TimelineEventUI['params'] } {
+  switch (effect) {
+    default:
+      return { effect, params }
+  }
+}
+
 export function compileEvents(events: TimelineEventUI[]): CompiledEvent[] {
   return events.map(compileEvent)
 }
@@ -47,14 +59,33 @@ export function compileRoleToDeviceConfig(
   projectColors: Record<string, import('./types/project').RgbColor>,
   options: CompileOptions
 ): DeviceConfig {
-  const validation = validateRole(role, projectColors)
+  const effectiveRole = migrateRoleToFiveOutputs(role)
+  const validation = validateRole(effectiveRole, projectColors)
   if (!validation.valid) {
     const first = validation.errors[0]
     throw new Error(`Cannot compile role ${role.role_id}: ${first.message}`)
   }
 
   const colors = mergePalette(projectColors)
-  const ledCount = options.ledCount ?? computeLedCountFromParts(role.parts)
+  const ledCount = effectiveRole.led_outputs
+    ? effectiveRole.led_outputs.reduce((sum, output) => sum + logicalLedCountForOutput(output), 0)
+    : options.ledCount ?? computeLedCountFromParts(effectiveRole.parts)
+  let outputOffset = 0
+  const outputs = effectiveRole.led_outputs?.map((output) => {
+    const led_count = logicalLedCountForOutput(output)
+    const compiled = {
+      id: output.id, gpio: output.gpio, offset: outputOffset, led_count,
+      layout: output.layout,
+      outbound_leds: output.outbound_leds,
+      parallel_branches: output.parallel_branches,
+      branch_leds: output.branch_leds,
+      return_leds: output.return_leds,
+      continuation_branch: output.continuation_branch,
+      direction: output.direction
+    }
+    outputOffset += led_count
+    return compiled
+  })
 
   return {
     schema_version: '1.0.0',
@@ -64,6 +95,7 @@ export function compileRoleToDeviceConfig(
       display_name: role.display_name,
       led_count: ledCount,
       data_gpio: options.dataGpio ?? 8,
+      outputs,
       led_type: options.ledType ?? 'WS2811',
       max_brightness: options.maxBrightness ?? 0.4
     },
@@ -73,22 +105,23 @@ export function compileRoleToDeviceConfig(
       timecode_port: 4210,
       device_status_port: 4211
     },
-    parts: role.parts.map((part) => ({
+    parts: effectiveRole.parts.map((part) => ({
       id: part.id,
       display_name: part.display_name,
       ranges: part.ranges.map((r) => ({ ...r }))
     })),
     colors,
-    events: role.events.map((event) => {
+    events: effectiveRole.events.map((event) => {
       const compiled = compileEvent(event)
+      const deviceEvent = mapEffectToDevice(compiled.effect, compiled.params)
       return {
         id: compiled.id,
         start_ms: compiled.startMs,
         end_ms: compiled.endMs,
         targets: compiled.targets,
         color: compiled.color,
-        effect: compiled.effect,
-        params: compiled.params,
+        effect: deviceEvent.effect,
+        params: deviceEvent.params,
         priority: compiled.priority,
         note: compiled.note
       }
@@ -120,6 +153,23 @@ export function decompileDeviceConfig(config: DeviceConfig): RoleDefinition {
       id: part.id,
       display_name: part.display_name,
       ranges: part.ranges.map((r) => ({ ...r }))
+    })),
+    led_outputs: config.device.outputs?.map((output) => ({
+      id: output.id,
+      display_name: config.parts.find((part) => part.ranges.some(
+        (range) => range.start === output.offset && range.end === output.offset + output.led_count - 1
+      ))?.display_name ?? output.id,
+      part_id: config.parts.find((part) => part.ranges.some(
+        (range) => range.start === output.offset && range.end === output.offset + output.led_count - 1
+      ))?.id ?? output.id,
+      gpio: output.gpio,
+      layout: output.layout ?? 'ring',
+      outbound_leds: output.outbound_leds ?? output.led_count,
+      parallel_branches: output.parallel_branches ?? 1,
+      branch_leds: output.branch_leds ?? 0,
+      return_leds: output.return_leds ?? 0,
+      continuation_branch: output.continuation_branch ?? 1,
+      direction: output.direction ?? 'clockwise'
     })),
     events: config.events.map(decompileDeviceEvent)
   }

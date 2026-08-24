@@ -3,6 +3,7 @@ import type { PartDefinition, PartId, TimelineEventUI } from '../../shared/types
 import { colorToCss, getStageColor } from '../../shared/stageColors'
 import { formatMsToTime, parseTimeToMs, tryParseTimeToMs } from '../../shared/timeParse'
 import type { TimelineKeyframe } from '../../shared/types/project'
+import { buildRouteSegments, getEffectLabel } from '../../shared/timelineEffects'
 import { buildTrackMeta } from './partLabels'
 import {
   HEADER_WIDTH,
@@ -17,6 +18,7 @@ import {
 const EDGE_HIT = 8
 const MIN_CLIP_MS = 50
 const MIN_CREATE_DRAG_PX = 8
+const MIN_MOVE_DRAG_PX = 4
 
 export interface TimelineCanvasProps {
   durationMs: number
@@ -47,10 +49,14 @@ interface DragState {
   origPartId?: PartId
   targetPartId?: PartId
   startMouseX: number
+  startMouseY: number
   origStartMs: number
   origEndMs: number
   createEndMs?: number
   createStarted?: boolean
+  moveStarted?: boolean
+  /** 只有單一部位的 clip 才允許拖曳換 track；跨部位路徑 clip 的 targets 不可被覆寫 */
+  allowPartReassign?: boolean
 }
 
 interface ClipPreview {
@@ -58,12 +64,41 @@ interface ClipPreview {
   startMs: number
   endMs: number
   color?: string
+  label?: string
   selected?: boolean
   ghost?: boolean
+  showLeftHandle?: boolean
+  showRightHandle?: boolean
 }
 
 function eventsForPart(events: TimelineEventUI[], partId: PartId): TimelineEventUI[] {
   return events.filter((e) => e.targets.includes(partId))
+}
+
+function clipsForEventPart(
+  event: TimelineEventUI,
+  partId: PartId,
+  parts: PartDefinition[]
+): Array<{ startMs: number; endMs: number }> {
+  const startMs = tryParseTimeToMs(event.from)
+  const endMs = tryParseTimeToMs(event.to)
+  if (startMs === null || endMs === null) return []
+  const route = event.params?.route_parts
+  if (!route || route.length <= 1) return [{ startMs, endMs }]
+
+  const duration = endMs - startMs
+  return buildRouteSegments(event.targets, parts, event.params)
+    .filter((segment) => segment.partId === partId)
+    .map((segment) => ({
+      startMs: startMs + duration * segment.startRatio,
+      endMs: startMs + duration * segment.endRatio
+    }))
+}
+
+const SEGMENT_BADGES = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩']
+
+function segmentBadge(index: number): string {
+  return SEGMENT_BADGES[index] ?? `${index + 1}.`
 }
 
 function msToFromTo(startMs: number, endMs: number): { from: string; to: string } {
@@ -105,6 +140,7 @@ export function TimelineCanvas(props: TimelineCanvasProps) {
     [props.parts]
   )
   const defaultPartId = trackOrder[0] ?? 'body'
+  const contentH = RULER_HEIGHT + WAVEFORM_HEIGHT + trackOrder.length * TRACK_HEIGHT
 
   const partAtY = useCallback(
     (my: number, tracksTop: number): PartId => {
@@ -124,11 +160,11 @@ export function TimelineCanvas(props: TimelineCanvasProps) {
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
-    const ro = new ResizeObserver(() => setSize({ w: el.clientWidth, h: el.clientHeight }))
+    const ro = new ResizeObserver(() => setSize({ w: el.clientWidth, h: contentH }))
     ro.observe(el)
-    setSize({ w: el.clientWidth, h: el.clientHeight })
+    setSize({ w: el.clientWidth, h: contentH })
     return () => ro.disconnect()
-  }, [])
+  }, [contentH])
 
   useEffect(() => {
     const el = containerRef.current
@@ -190,8 +226,18 @@ export function TimelineCanvas(props: TimelineCanvasProps) {
       ctx.lineWidth = 2
       ctx.stroke()
       ctx.fillStyle = 'rgba(255,255,255,0.85)'
-      ctx.fillRect(x1 + 1, barY + 2, 4, barH - 4)
-      ctx.fillRect(x1 + w - 5, barY + 2, 4, barH - 4)
+      if (clip.showLeftHandle !== false) ctx.fillRect(x1 + 1, barY + 2, 4, barH - 4)
+      if (clip.showRightHandle !== false) ctx.fillRect(x1 + w - 5, barY + 2, 4, barH - 4)
+    }
+
+    if (clip.label && w >= 48) {
+      ctx.save()
+      ctx.fillStyle = 'rgba(255,255,255,0.92)'
+      ctx.font = '600 11px system-ui'
+      ctx.textBaseline = 'middle'
+      const label = clip.label.length > 18 ? `${clip.label.slice(0, 17)}…` : clip.label
+      ctx.fillText(label, x1 + 8, barY + barH / 2)
+      ctx.restore()
     }
   }
 
@@ -286,6 +332,8 @@ export function TimelineCanvas(props: TimelineCanvasProps) {
       ctx.stroke()
     }
 
+    const clipRectByEventId = new Map<string, { x1: number; x2: number; y: number }>()
+
     trackOrder.forEach((partId, i) => {
       const y = tracksTop + i * TRACK_HEIGHT
       ctx.fillStyle = i % 2 === 0 ? '#10141d' : '#0c0e14'
@@ -295,24 +343,77 @@ export function TimelineCanvas(props: TimelineCanvasProps) {
       ctx.fillText(partLabels[partId] ?? partId, 14, y + TRACK_HEIGHT / 2 + 4)
 
       for (const ev of eventsForPart(displayEvents, partId)) {
-        const s = tryParseTimeToMs(ev.from)
-        const e = tryParseTimeToMs(ev.to)
-        if (s === null || e === null) continue
-        drawClip(
-          ctx,
-          {
-            partId,
-            startMs: s,
-            endMs: e,
-            color: ev.color,
-            selected: props.selectedId === ev.id
-          },
-          y,
-          start,
-          end
-        )
+        const eventStart = tryParseTimeToMs(ev.from)
+        const eventEnd = tryParseTimeToMs(ev.to)
+        const groupIndex = ev.params?.route_group_id ? ev.params.route_group_index ?? 0 : null
+        const label = ev.params?.route_label
+          ? `${getEffectLabel(ev.effect)} · ${ev.params.route_label}`
+          : groupIndex !== null
+            ? `${segmentBadge(groupIndex)} ${getEffectLabel(ev.effect)}`
+            : getEffectLabel(ev.effect)
+        for (const clip of clipsForEventPart(ev, partId, props.parts)) {
+          drawClip(
+            ctx,
+            {
+              partId,
+              ...clip,
+              color: ev.color,
+              label,
+              selected: props.selectedId === ev.id,
+              showLeftHandle: clip.startMs === eventStart,
+              showRightHandle: clip.endMs === eventEnd
+            },
+            y,
+            start,
+            end
+          )
+          if (ev.params?.route_group_id) {
+            clipRectByEventId.set(ev.id, {
+              x1: timeToX(clip.startMs, props.scrollMs, props.zoomPxPerMs),
+              x2: timeToX(clip.endMs, props.scrollMs, props.zoomPxPerMs),
+              y
+            })
+          }
+        }
       }
     })
+
+    // Draw thin dashed connectors between adjacent segments of the same
+    // route group. Purely visual — does not affect hit-test or dragging.
+    const groupsById = new Map<string, TimelineEventUI[]>()
+    for (const ev of displayEvents) {
+      const gid = ev.params?.route_group_id
+      if (!gid) continue
+      const list = groupsById.get(gid) ?? []
+      list.push(ev)
+      groupsById.set(gid, list)
+    }
+
+    if (groupsById.size > 0) {
+      ctx.save()
+      ctx.beginPath()
+      ctx.rect(HEADER_WIDTH, tracksTop, Math.max(0, size.w - HEADER_WIDTH), Math.max(0, size.h - tracksTop))
+      ctx.clip()
+      ctx.strokeStyle = 'rgba(148, 163, 184, 0.35)'
+      ctx.lineWidth = 1.5
+      ctx.setLineDash([4, 4])
+      for (const groupEvents of groupsById.values()) {
+        const sorted = [...groupEvents].sort(
+          (a, b) => (a.params?.route_group_index ?? 0) - (b.params?.route_group_index ?? 0)
+        )
+        for (let i = 0; i < sorted.length - 1; i++) {
+          const rectA = clipRectByEventId.get(sorted[i].id)
+          const rectB = clipRectByEventId.get(sorted[i + 1].id)
+          if (!rectA || !rectB) continue
+          ctx.beginPath()
+          ctx.moveTo(rectA.x2, rectA.y + TRACK_HEIGHT / 2)
+          ctx.lineTo(rectB.x1, rectB.y + TRACK_HEIGHT / 2)
+          ctx.stroke()
+        }
+      }
+      ctx.setLineDash([])
+      ctx.restore()
+    }
 
     if (createPreview) {
       const idx = trackOrder.indexOf(createPreview.partId)
@@ -350,17 +451,23 @@ export function TimelineCanvas(props: TimelineCanvasProps) {
     const partId = partAtY(my, tracksTop)
 
     for (const ev of eventsForPart(displayEvents, partId)) {
-      const s = tryParseTimeToMs(ev.from)
-      const e = tryParseTimeToMs(ev.to)
-      if (s === null || e === null) continue
-      const x1 = timeToX(s, props.scrollMs, props.zoomPxPerMs)
-      const x2 = timeToX(e, props.scrollMs, props.zoomPxPerMs)
-      const y = tracksTop + trackOrder.indexOf(partId) * TRACK_HEIGHT + 5
-      const barH = TRACK_HEIGHT - 10
-      if (mx >= x1 && mx <= x2 && my >= y && my <= y + barH) {
-        if (Math.abs(mx - x1) <= EDGE_HIT) return { partId, eventId: ev.id, edge: 'left' }
-        if (Math.abs(mx - x2) <= EDGE_HIT) return { partId, eventId: ev.id, edge: 'right' }
-        return { partId, eventId: ev.id }
+      const eventStart = tryParseTimeToMs(ev.from)
+      const eventEnd = tryParseTimeToMs(ev.to)
+      if (eventStart === null || eventEnd === null) continue
+      for (const clip of clipsForEventPart(ev, partId, props.parts)) {
+        const x1 = timeToX(clip.startMs, props.scrollMs, props.zoomPxPerMs)
+        const x2 = timeToX(clip.endMs, props.scrollMs, props.zoomPxPerMs)
+        const y = tracksTop + trackOrder.indexOf(partId) * TRACK_HEIGHT + 5
+        const barH = TRACK_HEIGHT - 10
+        if (mx >= x1 && mx <= x2 && my >= y && my <= y + barH) {
+          if (clip.startMs === eventStart && Math.abs(mx - x1) <= EDGE_HIT) {
+            return { partId, eventId: ev.id, edge: 'left' }
+          }
+          if (clip.endMs === eventEnd && Math.abs(mx - x2) <= EDGE_HIT) {
+            return { partId, eventId: ev.id, edge: 'right' }
+          }
+          return { partId, eventId: ev.id }
+        }
       }
     }
     return { partId }
@@ -405,11 +512,20 @@ export function TimelineCanvas(props: TimelineCanvasProps) {
     let newEnd = drag.origEndMs
 
     if (drag.mode === 'move') {
+      // 單純點擊（位移小於門檻）只做選取，不進入拖曳，避免誤改 clip
+      if (
+        !drag.moveStarted &&
+        Math.abs(mx - drag.startMouseX) < MIN_MOVE_DRAG_PX &&
+        Math.abs(my - drag.startMouseY) < MIN_MOVE_DRAG_PX
+      ) {
+        return
+      }
+      drag.moveStarted = true
       const anchor = props.snapTime(xToTime(drag.startMouseX, props.scrollMs, props.zoomPxPerMs))
       const delta = t - anchor
       newStart = Math.max(0, props.snapTime(drag.origStartMs + delta))
       newEnd = newStart + dur
-      drag.targetPartId = partAtY(my, tracksTop)
+      drag.targetPartId = drag.allowPartReassign ? partAtY(my, tracksTop) : drag.origPartId
     } else if (drag.mode === 'resize-left') {
       newStart = Math.min(t, drag.origEndMs - MIN_CLIP_MS)
       newEnd = drag.origEndMs
@@ -418,8 +534,16 @@ export function TimelineCanvas(props: TimelineCanvasProps) {
       newEnd = Math.max(t, drag.origStartMs + MIN_CLIP_MS)
     }
 
-    const partId = drag.mode === 'move' ? drag.targetPartId ?? drag.origPartId : drag.origPartId
-    const next = patchEvent(displayEvents, drag.eventId, newStart, newEnd, partId)
+    // 只有「單一部位的 clip 被垂直拖到別的 track」才改 targets；
+    // 跨部位路徑 clip 與純水平移動 / resize 都保留原本的 targets。
+    const nextPartId =
+      drag.mode === 'move' &&
+      drag.allowPartReassign &&
+      drag.targetPartId &&
+      drag.targetPartId !== drag.origPartId
+        ? drag.targetPartId
+        : undefined
+    const next = patchEvent(displayEvents, drag.eventId, newStart, newEnd, nextPartId)
     liveEventsRef.current = next
     setLiveEvents(next)
   }
@@ -439,6 +563,7 @@ export function TimelineCanvas(props: TimelineCanvasProps) {
           mode: 'scrub',
           partId: defaultPartId,
           startMouseX: mx,
+          startMouseY: my,
           origStartMs: ms,
           origEndMs: ms
         }
@@ -465,8 +590,10 @@ export function TimelineCanvas(props: TimelineCanvasProps) {
         origPartId: hit.partId,
         targetPartId: hit.partId,
         startMouseX: mx,
+        startMouseY: my,
         origStartMs: parseTimeToMs(ev.from),
-        origEndMs: parseTimeToMs(ev.to)
+        origEndMs: parseTimeToMs(ev.to),
+        allowPartReassign: ev.targets.length <= 1
       }
       setCursor(hit.edge ? 'ew-resize' : 'grabbing')
     } else {
@@ -475,6 +602,7 @@ export function TimelineCanvas(props: TimelineCanvasProps) {
         mode: 'create',
         partId: hit.partId,
         startMouseX: mx,
+        startMouseY: my,
         origStartMs: props.snapTime(xToTime(mx, props.scrollMs, props.zoomPxPerMs)),
         origEndMs: 0
       }
@@ -517,6 +645,11 @@ export function TimelineCanvas(props: TimelineCanvasProps) {
           targets: [drag.partId],
           color: 'electric_cyan',
           effect: 'solid',
+          params: {
+            fade_curve: 'ease_in_out',
+            intensity: 1,
+            speed: 1
+          },
           priority: 10
         }
         props.onEventsChange([...props.events, newEv])
@@ -567,11 +700,15 @@ export function TimelineCanvas(props: TimelineCanvasProps) {
   }
 
   return (
-    <div ref={containerRef} className="timeline-canvas-wrap">
+    <div
+      ref={containerRef}
+      className="timeline-canvas-wrap"
+      style={{ flex: 'none', height: contentH, overflow: 'auto' }}
+    >
       <canvas
         ref={canvasRef}
         className="timeline-canvas"
-        style={{ cursor }}
+        style={{ cursor, height: contentH }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}

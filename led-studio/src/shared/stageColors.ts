@@ -24,6 +24,27 @@ export const STAGE_COLOR_NAMES = [
 
 export type StageColorName = (typeof STAGE_COLOR_NAMES)[number]
 
+export const STAGE_COLOR_LABELS: Record<StageColorName, string> = {
+  electric_cyan: '電光青',
+  hot_magenta: '桃紅紫',
+  laser_lime: '雷射綠',
+  royal_violet: '皇家紫',
+  golden_spark: '金色火花',
+  flame_orange: '火焰橘',
+  ice_blue: '冰藍',
+  neon_pink: '霓虹粉',
+  emerald_glow: '翡翠綠',
+  ultraviolet: '紫外藍紫',
+  silver_white: '銀白',
+  deep_crimson: '深緋紅',
+  red: '純紅',
+  green: '純綠',
+  blue: '純藍',
+  white: '純白',
+  black: '黑色',
+  off: '熄燈'
+}
+
 export const STAGE_COLORS: Record<StageColorName, RgbColor> = {
   electric_cyan: { r: 0, g: 245, b: 255 },
   hot_magenta: { r: 255, g: 0, b: 128 },
@@ -66,4 +87,11 @@ export function resolveColorCss(
 
 export function mergePalette(extra?: Record<string, RgbColor>): Record<string, RgbColor> {
   return { ...STAGE_COLORS, ...extra }
+}
+
+export function getStageColorLabel(name: string): string {
+  if (name in STAGE_COLOR_LABELS) {
+    return STAGE_COLOR_LABELS[name as StageColorName]
+  }
+  return name
 }

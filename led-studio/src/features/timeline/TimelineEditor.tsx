@@ -11,7 +11,11 @@ import { DancerPreviewPanel } from '../preview/DancerPreviewPanel'
 import { EventInspector } from './EventInspector'
 import { TimelineCanvas } from './TimelineCanvas'
 import { useSnapGrid } from './hooks/useSnapGrid'
-import { useTimelineViewport } from './hooks/useTimelineViewport'
+import {
+  maxTimelineScroll,
+  useTimelineViewport,
+  visibleTimelineMs
+} from './hooks/useTimelineViewport'
 
 interface TimelineEditorProps {
   project: LedProject
@@ -31,14 +35,15 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
     scrollMs,
     setScrollMs,
     zoomPxPerMs,
-    zoomIn,
-    zoomOut,
     zoomAt,
+    zoomCenteredAt,
     followPlayhead,
+    centerPlayhead,
     resetViewport
   } = useTimelineViewport(durationMs)
   const [snapEnabled, setSnapEnabled] = useState(true)
-  const { snapTime } = useSnapGrid(project.project.bpm, snapEnabled)
+  const [snapSubdivision, setSnapSubdivision] = useState(4)
+  const { snapTime } = useSnapGrid(project.project.bpm, snapEnabled, snapSubdivision)
   const [playheadMs, setPlayheadMs] = useState(0)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [musicUrl, setMusicUrl] = useState<string | null>(null)
@@ -50,6 +55,12 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
   const [previewOpen, setPreviewOpen] = useState(false)
   const [copyNotice, setCopyNotice] = useState<string | null>(null)
   const [copyError, setCopyError] = useState<string | null>(null)
+  const [ledSyncEnabled, setLedSyncEnabled] = useState(true)
+  const [followEnabled, setFollowEnabled] = useState(true)
+  const [workspaceWidth, setWorkspaceWidth] = useState(800)
+  const ledSyncRef = useRef(true)
+  const followEnabledRef = useRef(true)
+  const lastBridgeTimeRef = useRef(0)
   const audioRef = useRef<HTMLAudioElement>(null)
   const objectUrlRef = useRef<string | null>(null)
   const playheadRafRef = useRef<number>(0)
@@ -57,6 +68,10 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
   const zoomRef = useRef(zoomPxPerMs)
   const clipClipboardRef = useRef<TimelineClipClipboard | null>(null)
   zoomRef.current = zoomPxPerMs
+  followEnabledRef.current = followEnabled
+
+  const visibleMs = visibleTimelineMs(workspaceWidth, zoomPxPerMs)
+  const maxScrollMs = maxTimelineScroll(durationMs, workspaceWidth, zoomPxPerMs)
 
   const selected = useMemo(
     () => role.events.find((e) => e.id === selectedId) ?? null,
@@ -66,6 +81,20 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
   useEffect(() => {
     resetViewport(durationMs)
   }, [durationMs, resetViewport])
+
+  useEffect(() => {
+    const workspace = workspaceRef.current
+    if (!workspace) return
+    const updateWidth = () => setWorkspaceWidth(Math.max(1, workspace.clientWidth || 800))
+    const observer = new ResizeObserver(updateWidth)
+    observer.observe(workspace)
+    updateWidth()
+    return () => observer.disconnect()
+  }, [])
+
+  useEffect(() => {
+    setScrollMs((current) => Math.min(current, maxScrollMs))
+  }, [maxScrollMs, setScrollMs])
 
   useEffect(() => {
     let cancelled = false
@@ -147,6 +176,75 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.project.music_file])
 
+  // ---- LED 同步（Timeline 播放 → Timecode Bridge）----
+
+  const notifyBridgeTime = (ms: number) => {
+    if (!ledSyncRef.current || !window.api?.show.bridgePreviewTime) return
+    const now = Date.now()
+    if (now - lastBridgeTimeRef.current < 50) return
+    lastBridgeTimeRef.current = now
+    void window.api.show.bridgePreviewTime(ms)
+  }
+
+  const bridgeOnPlay = async () => {
+    if (!ledSyncRef.current || !window.api) return
+    const ms = Math.round((audioRef.current?.currentTime ?? playheadMs / 1000) * 1000)
+    const state = await window.api.show.bridgeGetState()
+    if (!state.running) {
+      await window.api.show.bridgeStart({ source: 'preview' })
+      if (ms > 0) await window.api.show.bridgeSeek(ms)
+    } else if (state.paused) {
+      await window.api.show.bridgeResume()
+      // SEEK 讓韌體硬定位到目前位置（同時相容尚未支援 resume 的舊韌體）
+      await window.api.show.bridgeSeek(ms)
+    }
+    lastBridgeTimeRef.current = 0
+    notifyBridgeTime(ms)
+  }
+
+  const bridgeOnPause = () => {
+    if (!ledSyncRef.current || !window.api) return
+    void window.api.show.bridgePause()
+  }
+
+  const bridgeOnSeek = (ms: number) => {
+    if (!ledSyncRef.current || !window.api) return
+    void (async () => {
+      const state = await window.api!.show.bridgeGetState()
+      if (!state.running) {
+        await window.api!.show.bridgeStart({ source: 'preview' })
+      }
+      // A hard SEEK updates the ESP immediately; preview time keeps the
+      // bridge pinned to the dragged playhead while audio is not running.
+      await window.api!.show.bridgeSeek(ms)
+      if (audioRef.current?.paused ?? true) {
+        await window.api!.show.bridgePause()
+      }
+      lastBridgeTimeRef.current = 0
+      notifyBridgeTime(ms)
+    })()
+  }
+
+  useEffect(() => {
+    ledSyncRef.current = ledSyncEnabled
+    if (!window.api) return
+    if (ledSyncEnabled) {
+      const audio = audioRef.current
+      if (audio && !audio.paused) void bridgeOnPlay()
+    } else {
+      void window.api.show.bridgeStop()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ledSyncEnabled])
+
+  useEffect(() => {
+    return () => {
+      if (ledSyncRef.current && window.api) {
+        void window.api.show.bridgeStop()
+      }
+    }
+  }, [])
+
   useEffect(() => {
     const audio = audioRef.current
     if (!audio || !musicUrl) return
@@ -158,7 +256,8 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
       setPlayheadMs(ms)
       if (!audio.paused) {
         const w = workspaceRef.current?.clientWidth ?? 800
-        followPlayhead(ms, w, zoomRef.current)
+        if (followEnabledRef.current) followPlayhead(ms, w, zoomRef.current)
+        notifyBridgeTime(ms)
       }
       if (!audio.paused) playheadRafRef.current = requestAnimationFrame(tick)
     }
@@ -166,24 +265,36 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
     const onPlay = () => {
       cancelAnimationFrame(playheadRafRef.current)
       playheadRafRef.current = requestAnimationFrame(tick)
+      void bridgeOnPlay()
     }
     const onPause = () => {
       cancelAnimationFrame(playheadRafRef.current)
       syncPlayhead()
+      bridgeOnPause()
+    }
+    const onSeeked = () => {
+      const ms = Math.round(audio.currentTime * 1000)
+      setPlayheadMs(ms)
+      if (followEnabledRef.current) {
+        const w = workspaceRef.current?.clientWidth ?? 800
+        followPlayhead(ms, w, zoomRef.current)
+      }
+      bridgeOnSeek(ms)
     }
 
     audio.addEventListener('play', onPlay)
     audio.addEventListener('pause', onPause)
     audio.addEventListener('ended', onPause)
-    audio.addEventListener('seeked', syncPlayhead)
+    audio.addEventListener('seeked', onSeeked)
 
     return () => {
       cancelAnimationFrame(playheadRafRef.current)
       audio.removeEventListener('play', onPlay)
       audio.removeEventListener('pause', onPause)
       audio.removeEventListener('ended', onPause)
-      audio.removeEventListener('seeked', syncPlayhead)
+      audio.removeEventListener('seeked', onSeeked)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [musicUrl, followPlayhead])
 
   const setEvents = (events: TimelineEventUI[]) => {
@@ -297,6 +408,22 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
   const setPlayhead = (ms: number) => {
     setPlayheadMs(ms)
     seekAudio(ms)
+    bridgeOnSeek(ms)
+  }
+
+  const setPlayheadFromProgress = (ms: number) => {
+    setPlayhead(ms)
+    if (followEnabledRef.current) followPlayhead(ms, workspaceWidth, zoomRef.current)
+  }
+
+  const enableFollow = () => {
+    setFollowEnabled(true)
+    followEnabledRef.current = true
+    followPlayhead(playheadMs, workspaceWidth, zoomRef.current)
+  }
+
+  const locatePlayhead = () => {
+    centerPlayhead(playheadMs, workspaceWidth, zoomRef.current)
   }
 
   const setKeyframes = (keyframes: TimelineKeyframe[]) => {
@@ -316,6 +443,11 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
       targets: [role.parts[0]?.id ?? 'body'],
       color: 'hot_magenta',
       effect: 'solid',
+      params: {
+        fade_curve: 'ease_in_out',
+        intensity: 1,
+        speed: 1
+      },
       priority: 10
     }
     setEvents([...role.events, ev])
@@ -396,15 +528,57 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
         </div>
 
         <div className="transport-group transport-tools">
-          <button type="button" className="btn btn-sm" onClick={zoomOut} title="縮小">
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={() => zoomCenteredAt(playheadMs, 1 / 1.25, workspaceWidth)}
+            title="以播放頭為中心縮小"
+          >
             −
           </button>
-          <button type="button" className="btn btn-sm" onClick={zoomIn} title="放大">
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={() => zoomCenteredAt(playheadMs, 1.25, workspaceWidth)}
+            title="以播放頭為中心放大"
+          >
             +
+          </button>
+          <button
+            type="button"
+            className={`btn btn-sm${followEnabled ? ' btn-toggle-active' : ''}`}
+            onClick={() => followEnabled ? setFollowEnabled(false) : enableFollow()}
+            title="播放頭接近右側時自動推動 Timeline"
+            aria-pressed={followEnabled}
+          >
+            跟隨播放
+          </button>
+          <button type="button" className="btn btn-sm" onClick={locatePlayhead} title="將播放頭移到畫面中央">
+            定位播放頭
           </button>
           <label className="snap-toggle">
             <input type="checkbox" checked={snapEnabled} onChange={(e) => setSnapEnabled(e.target.checked)} />
-            Snap {project.project.bpm}
+            節拍吸附
+          </label>
+          <label className="timeline-compact-field">
+            <span>BPM</span>
+            <input type="number" min={20} max={300} value={project.project.bpm}
+              onChange={(e) => {
+                const bpm = Math.min(300, Math.max(20, Math.round(Number(e.target.value) || 20)))
+                onProjectChange({
+                  ...project,
+                  project: { ...project.project, bpm, updated_at: new Date().toISOString() }
+                })
+              }} />
+          </label>
+          <label className="timeline-compact-field">
+            <span>格線</span>
+            <select value={snapSubdivision} onChange={(e) => setSnapSubdivision(Number(e.target.value))}>
+              <option value={1}>1/4 拍</option>
+              <option value={2}>1/8 拍</option>
+              <option value={4}>1/16 拍</option>
+              <option value={8}>1/32 拍</option>
+            </select>
           </label>
           <button type="button" className="btn btn-primary btn-sm" onClick={addEvent}>
             + Clip
@@ -420,6 +594,15 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
             aria-pressed={previewOpen}
           >
             燈光預覽
+          </button>
+          <button
+            type="button"
+            className={`btn btn-sm${ledSyncEnabled ? ' btn-toggle-active' : ''}`}
+            onClick={() => setLedSyncEnabled((on) => !on)}
+            title={ledSyncEnabled ? '停止把 Timeline 播放送到 LED 裝置' : '播放/暫停/拉動時間同步控制 LED 裝置'}
+            aria-pressed={ledSyncEnabled}
+          >
+            LED 同步{ledSyncEnabled ? '：開' : '：關'}
           </button>
         </div>
       </div>
@@ -456,7 +639,7 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
               min={0}
               max={Math.max(1, durationMs)}
               value={Math.min(playheadMs, durationMs)}
-              onChange={(e) => setPlayhead(Number(e.target.value))}
+              onChange={(e) => setPlayheadFromProgress(Number(e.target.value))}
               className="transport-progress"
               title="播放進度"
             />
@@ -465,9 +648,14 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
           <input
             type="range"
             min={0}
-            max={Math.max(0, durationMs - 1000)}
-            value={scrollMs}
-            onChange={(e) => setScrollMs(Number(e.target.value))}
+            max={maxScrollMs}
+            step={Math.max(1, Math.round(visibleMs / 200))}
+            value={Math.min(scrollMs, maxScrollMs)}
+            onChange={(e) => {
+              setFollowEnabled(false)
+              followEnabledRef.current = false
+              setScrollMs(Number(e.target.value))
+            }}
             className="timeline-scrubber"
             title="Timeline 水平捲動"
           />
@@ -512,6 +700,9 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
           colors={project.colors}
           onPatch={patchSelected}
           onDelete={deleteSelected}
+          allEvents={role.events}
+          onEventsChange={setEvents}
+          onSelect={setSelectedId}
         />
       ) : (
         <aside className="timeline-inspector timeline-inspector-empty">

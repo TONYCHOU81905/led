@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { partIdToRegions, resolveFigureRegions } from '../src/features/preview/partRegionMap'
+import {
+  FIGURE_FLOW_ORDER,
+  partIdToRegions,
+  regionsForParts,
+  resolveFigureRegions
+} from '../src/features/preview/partRegionMap'
+import { cloneDefaultChainParts } from '../src/shared/ledChainDefaults'
 import type { PartDefinition, ResolvedColor } from '../src/shared/types/project'
 
 const lit: ResolvedColor = { r: 255, g: 0, b: 128, visible: true }
@@ -32,5 +38,24 @@ describe('partRegionMap', () => {
     expect(regions.left_hand).toEqual(off)
     expect(regions.right_hand).toEqual(off)
     expect(unmapped).toEqual([{ partId: 'custom_belt', label: '腰帶', color: lit }])
+  })
+
+  it('exposes the physical wiring order for the flow guide', () => {
+    expect(FIGURE_FLOW_ORDER).toEqual(['head', 'right_hand', 'right_foot', 'left_foot', 'left_hand'])
+    expect(FIGURE_FLOW_ORDER).toHaveLength(5)
+  })
+
+  it('only returns regions that the default chain parts actually wire up', () => {
+    const parts = cloneDefaultChainParts()
+    const regions = regionsForParts(parts)
+
+    expect(regions).toEqual(['head', 'left_hand', 'right_hand', 'left_foot', 'right_foot'])
+    expect(regions).not.toContain('body')
+    expect(regions).not.toContain('left_shoe')
+    expect(regions).not.toContain('right_shoe')
+  })
+
+  it('returns an empty list for no parts', () => {
+    expect(regionsForParts([])).toEqual([])
   })
 })
