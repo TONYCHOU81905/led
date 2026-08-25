@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { LedProject, RoleDefinition, TimelineEventUI, TimelineKeyframe } from '../../shared/types/project'
 import { formatMsToTime, parseTimeToMs, tryParseTimeToMs } from '../../shared/timeParse'
 import { newEventId, updateEvent } from '../../shared/projectMutations'
-import { clipFromEvent, pasteClip, type TimelineClipClipboard } from '../../shared/timelineClipboard'
+import { clipsFromEvents, pasteClips, type TimelineClipGroup } from '../../shared/timelineClipboard'
 import { compileProjectRole, configChecksum } from '../../shared/configCompiler'
 import { defaultCompileOptions, deviceConfigFilename } from '../../shared/deviceConfigDefaults'
 import { loadMusicFromPath } from './audioAnalysis'
@@ -68,7 +68,7 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
   const playheadRafRef = useRef<number>(0)
   const workspaceRef = useRef<HTMLDivElement>(null)
   const zoomRef = useRef(zoomPxPerMs)
-  const clipClipboardRef = useRef<TimelineClipClipboard | null>(null)
+  const clipClipboardRef = useRef<TimelineClipGroup | null>(null)
   zoomRef.current = zoomPxPerMs
   followEnabledRef.current = followEnabled
 
@@ -315,27 +315,35 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
       const key = e.key.toLowerCase()
 
       if (mod && key === 'c') {
-        // 多選時語意複雜（單一 clipboard 只放得下一個 clip），維持只作用在主選取（selectedId，即選取集合中最後一個）
-        if (!selectedId) return
-        const source = role.events.find((ev) => ev.id === selectedId)
-        if (!source) return
+        // 複製整個選取集合，clipboard 會保留成員之間的相對時間關係
+        if (selectedIds.length === 0) return
+        const sources = role.events.filter((ev) => selectedIds.includes(ev.id))
+        if (sources.length === 0) return
         e.preventDefault()
-        clipClipboardRef.current = clipFromEvent(source)
+        clipClipboardRef.current = clipsFromEvents(sources)
         setCopyError(null)
-        setCopyNotice(`已複製 clip（${source.from} → ${source.to}）`)
+        setCopyNotice(
+          sources.length === 1
+            ? `已複製 clip（${sources[0].from} → ${sources[0].to}）`
+            : `已複製 ${sources.length} 個 clip`
+        )
         return
       }
 
       if (mod && key === 'v') {
-        // 貼上永遠只產生一個新 clip 於 playhead，與選取集合無關，貼完後單選新 clip
-        const clip = clipClipboardRef.current
-        if (!clip) return
+        // 整組貼到 playhead，維持成員之間的相對關係；貼完後選取新產生的那一組
+        const board = clipClipboardRef.current
+        if (!board || board.items.length === 0) return
         e.preventDefault()
-        const pasted = pasteClip(clip, playheadMs, durationMs, snapTime)
-        setEvents([...role.events, pasted])
-        setSelectedIds([pasted.id])
+        const pasted = pasteClips(board, playheadMs, durationMs, snapTime)
+        setEvents([...role.events, ...pasted])
+        setSelectedIds(pasted.map((p) => p.id))
         setCopyError(null)
-        setCopyNotice(`已貼上 clip 於 ${pasted.from}`)
+        setCopyNotice(
+          pasted.length === 1
+            ? `已貼上 clip 於 ${pasted[0].from}`
+            : `已貼上 ${pasted.length} 個 clip 於 ${pasted[0].from}`
+        )
         return
       }
 
