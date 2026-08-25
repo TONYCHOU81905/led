@@ -17,7 +17,7 @@ import {
 
 const EDGE_HIT = 8
 /** 指標距離畫面左右緣多少 px 之內就開始自動捲動 */
-const EDGE_SCROLL_PX = 56
+const EDGE_SCROLL_PX = 32
 /** 自動捲動的最高速度（px/幀），實際速度依接近邊緣的程度線性遞增 */
 const EDGE_SCROLL_MAX_PX = 14
 const MIN_CLIP_MS = 50
