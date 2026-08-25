@@ -16,6 +16,10 @@ import {
 } from './utils/timeCoords'
 
 const EDGE_HIT = 8
+/** 指標距離畫面左右緣多少 px 之內就開始自動捲動 */
+const EDGE_SCROLL_PX = 56
+/** 自動捲動的最高速度（px/幀），實際速度依接近邊緣的程度線性遞增 */
+const EDGE_SCROLL_MAX_PX = 14
 const MIN_CLIP_MS = 50
 const MIN_CREATE_DRAG_PX = 8
 const MIN_MOVE_DRAG_PX = 4
@@ -38,6 +42,11 @@ export interface TimelineCanvasProps {
   onPlayheadChange: (ms: number) => void
   onKeyframesChange?: (keyframes: TimelineKeyframe[]) => void
   onZoomAt?: (anchorMs: number, factor: number) => void
+  /**
+   * 拖曳 playhead 到畫面左右邊緣時持續呼叫，deltaMs 為這一幀要捲動的量
+   * （負值往左）。呼叫端要同時捲動畫面並把 playhead 推進同樣的量。
+   */
+  onEdgeScroll?: (deltaMs: number) => void
 }
 
 type DragMode = 'create' | 'move' | 'resize-left' | 'resize-right' | 'scrub' | null
@@ -57,6 +66,8 @@ interface DragState {
   moveStarted?: boolean
   /** 只有單一部位的 clip 才允許拖曳換 track；跨部位路徑 clip 的 targets 不可被覆寫 */
   allowPartReassign?: boolean
+  /** 最新的指標 x，供邊緣自動捲動的 rAF 迴圈使用 */
+  lastMouseX?: number
   /** move 模式下，拖曳開始時整個選取集合裡每個 event 的原始 start/end 快照 */
   origById?: Record<string, { start: number; end: number }>
   /** 一般點擊（非 mod、非 shift）時記錄的 id：放開時若沒有真的拖曳，就把選取收斂成只有這一個 */
@@ -169,6 +180,52 @@ export function TimelineCanvas(props: TimelineCanvasProps) {
   const [cursor, setCursor] = useState('default')
   const dragRef = useRef<DragState | null>(null)
   const captureRef = useRef(false)
+  const edgeRafRef = useRef(0)
+  // rAF 迴圈裡讀不到最新的 props/size，所以每次 render 都同步進 ref
+  const edgeCtxRef = useRef({ zoom: props.zoomPxPerMs, width: 800, onEdgeScroll: props.onEdgeScroll })
+
+  edgeCtxRef.current = {
+    zoom: props.zoomPxPerMs,
+    width: size.w,
+    onEdgeScroll: props.onEdgeScroll
+  }
+
+  const stopEdgeScroll = useCallback(() => {
+    if (edgeRafRef.current) {
+      cancelAnimationFrame(edgeRafRef.current)
+      edgeRafRef.current = 0
+    }
+  }, [])
+
+  /**
+   * 拖 playhead 到畫面左右邊緣時持續捲動。速度依「指標離邊緣多近」線性遞增，
+   * 所以輕輕碰到邊緣是慢慢滑，壓到最邊才是最快 —— 這樣才能一點一點微調。
+   */
+  const edgeScrollTick = useCallback(() => {
+    const drag = dragRef.current
+    const { zoom, width, onEdgeScroll } = edgeCtxRef.current
+    if (!drag || drag.mode !== 'scrub' || !onEdgeScroll || drag.lastMouseX === undefined) {
+      edgeRafRef.current = 0
+      return
+    }
+    const mx = drag.lastMouseX
+    const leftBound = HEADER_WIDTH + EDGE_SCROLL_PX
+    const rightBound = width - EDGE_SCROLL_PX
+    let px = 0
+    if (mx < leftBound) {
+      px = -EDGE_SCROLL_MAX_PX * Math.min(1, (leftBound - mx) / EDGE_SCROLL_PX)
+    } else if (mx > rightBound) {
+      px = EDGE_SCROLL_MAX_PX * Math.min(1, (mx - rightBound) / EDGE_SCROLL_PX)
+    }
+    if (px !== 0 && zoom > 0) onEdgeScroll(px / zoom)
+    edgeRafRef.current = requestAnimationFrame(edgeScrollTick)
+  }, [])
+
+  const ensureEdgeScroll = useCallback(() => {
+    if (!edgeRafRef.current) edgeRafRef.current = requestAnimationFrame(edgeScrollTick)
+  }, [edgeScrollTick])
+
+  useEffect(() => stopEdgeScroll, [stopEdgeScroll])
 
   const { order: trackOrder, labels: partLabels } = useMemo(
     () => buildTrackMeta(props.parts),
@@ -540,8 +597,10 @@ export function TimelineCanvas(props: TimelineCanvasProps) {
     }
 
     if (drag.mode === 'scrub') {
+      drag.lastMouseX = mx
       const scrubMs = Math.max(0, Math.min(props.durationMs, xToTime(mx, props.scrollMs, props.zoomPxPerMs)))
       props.onPlayheadChange(scrubMs)
+      ensureEdgeScroll()
       return
     }
 
@@ -608,22 +667,20 @@ export function TimelineCanvas(props: TimelineCanvasProps) {
 
     if (my < wfBottom && mx > HEADER_WIDTH) {
       const ms = Math.max(0, Math.min(props.durationMs, xToTime(mx, props.scrollMs, props.zoomPxPerMs)))
-      if (my >= RULER_HEIGHT) {
-        dragRef.current = {
-          mode: 'scrub',
-          partId: defaultPartId,
-          startMouseX: mx,
-          startMouseY: my,
-          origStartMs: ms,
-          origEndMs: ms
-        }
-        setCursor('ew-resize')
-        captureRef.current = true
-        props.onPlayheadChange(ms)
-        ;(e.target as HTMLCanvasElement).setPointerCapture(e.pointerId)
-        return
+      // 刻度尺與波形區都能直接拖 playhead
+      dragRef.current = {
+        mode: 'scrub',
+        partId: defaultPartId,
+        startMouseX: mx,
+        startMouseY: my,
+        lastMouseX: mx,
+        origStartMs: ms,
+        origEndMs: ms
       }
-      props.onPlayheadChange(props.snapTime(ms))
+      setCursor('ew-resize')
+      captureRef.current = true
+      props.onPlayheadChange(my >= RULER_HEIGHT ? ms : props.snapTime(ms))
+      ;(e.target as HTMLCanvasElement).setPointerCapture(e.pointerId)
       return
     }
 
@@ -782,6 +839,7 @@ export function TimelineCanvas(props: TimelineCanvasProps) {
       props.onSelectionChange([drag.clickCollapseId])
     }
 
+    stopEdgeScroll()
     dragRef.current = null
     setCursor('default')
     if (captureRef.current) {

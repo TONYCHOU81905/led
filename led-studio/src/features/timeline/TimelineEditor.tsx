@@ -14,7 +14,6 @@ import { applyDurationToSelection, buildSelectionPatch } from './batchPatch'
 import { useSnapGrid } from './hooks/useSnapGrid'
 import {
   maxTimelineScroll,
-  needsRecenter,
   useTimelineViewport,
   visibleTimelineMs
 } from './hooks/useTimelineViewport'
@@ -40,6 +39,8 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
     zoomAt,
     zoomCenteredAt,
     followPlayhead,
+    keepPlayheadVisible,
+    scrollBy,
     centerPlayhead,
     resetViewport
   } = useTimelineViewport(durationMs)
@@ -69,8 +70,10 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
   const playheadRafRef = useRef<number>(0)
   const workspaceRef = useRef<HTMLDivElement>(null)
   const zoomRef = useRef(zoomPxPerMs)
+  const playheadRef = useRef(0)
   const clipClipboardRef = useRef<TimelineClipGroup | null>(null)
   zoomRef.current = zoomPxPerMs
+  playheadRef.current = playheadMs
   followEnabledRef.current = followEnabled
 
   const visibleMs = visibleTimelineMs(workspaceWidth, zoomPxPerMs)
@@ -447,6 +450,18 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
     audio.currentTime = ms / 1000
   }
 
+  /**
+   * 拖 playhead 到畫面邊緣時，每幀捲動 deltaMs 並把 playhead 推進同樣的量
+   * （指標停在邊緣不動，時間持續前進）。用 ref 累加，避免 rAF 連續幀之間
+   * 因為還沒 re-render 而讀到舊的 playheadMs。
+   */
+  const handleEdgeScroll = (deltaMs: number) => {
+    scrollBy(deltaMs, workspaceWidth, zoomRef.current)
+    const next = Math.max(0, Math.min(durationMs, playheadRef.current + deltaMs))
+    playheadRef.current = next
+    setPlayhead(next)
+  }
+
   const setPlayhead = (ms: number) => {
     setPlayheadMs(ms)
     seekAudio(ms)
@@ -455,12 +470,9 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
 
   const setPlayheadFromProgress = (ms: number) => {
     setPlayhead(ms)
-    // 拖整曲進度條是明確的 seek 手勢 —— timeline 要持續跟著左右走。
-    // 不能只靠 followPlayhead：它的 12%~74% dead zone 是給播放中自動跟隨用的，
-    // 手動拖曳時會讓 timeline 在中間大段區間完全不動，看起來像功能不見了。
-    if (needsRecenter(ms, scrollMs, visibleMs)) {
-      centerPlayhead(ms, workspaceWidth, zoomRef.current)
-    }
+    // 用最小移動量把 playhead 保持在畫面內，所以連續拖曳是平滑地一點一點推移。
+    // 不用 centerPlayhead —— 那會每次把 playhead 拉到正中央，看起來就是一次跳好幾秒。
+    keepPlayheadVisible(ms, workspaceWidth, zoomRef.current)
   }
 
   const enableFollow = () => {
@@ -726,6 +738,7 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
               onPlayheadChange={setPlayhead}
               onKeyframesChange={setKeyframes}
               onZoomAt={handleZoomAt}
+              onEdgeScroll={handleEdgeScroll}
             />
           </div>
         </div>

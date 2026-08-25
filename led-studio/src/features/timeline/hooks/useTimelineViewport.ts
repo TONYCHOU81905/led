@@ -14,23 +14,28 @@ export function maxTimelineScroll(
 }
 
 /**
- * 拖整曲進度條 seek 時，判斷是否該把 timeline 重新捲到讓 playhead 居中。
+ * 把 timeline 捲到「剛好讓 playhead 留在畫面內」的最小移動量。
  *
- * calculateFollowScroll 的 12%~74% dead zone 是給「播放中自動跟隨」用的
- * （避免每一幀都在滑動）。但手動拖進度條是明確的 seek 手勢，使用者期待
- * timeline 跟著左右走，dead zone 太寬會讓人以為功能壞了 —— 所以這裡用比較
- * 窄的舒適區，超出就居中。
+ * 跟 centerPlayhead 的差別：centerPlayhead 每次都把 playhead 拉到正中央，
+ * 拖曳時看起來就是一次跳好幾秒；這裡只推最小的距離，所以連續拖曳會是平滑地
+ * 一點一點推移。marginRatio 是希望 playhead 距離邊緣保留的緩衝。
  */
-export function needsRecenter(
+export function scrollToKeepVisible(
+  prevScrollMs: number,
   playheadMs: number,
-  scrollMs: number,
   visibleMs: number,
-  lo = 0.3,
-  hi = 0.7
-): boolean {
-  if (visibleMs <= 0) return false
-  const rel = (playheadMs - scrollMs) / visibleMs
-  return rel < lo || rel > hi
+  maxScrollMs: number,
+  marginRatio = 0.1
+): number {
+  if (visibleMs <= 0) return prevScrollMs
+  const margin = Math.min(visibleMs * marginRatio, visibleMs / 2)
+  let next = prevScrollMs
+  if (playheadMs < prevScrollMs + margin) {
+    next = playheadMs - margin
+  } else if (playheadMs > prevScrollMs + visibleMs - margin) {
+    next = playheadMs - visibleMs + margin
+  }
+  return Math.max(0, Math.min(maxScrollMs, next))
 }
 
 export function calculateFollowScroll(
@@ -98,6 +103,25 @@ export function useTimelineViewport(durationMs: number) {
     [durationMs]
   )
 
+  /** 以最小移動量把 playhead 保持在畫面內（拖曳時的平滑跟隨） */
+  const keepPlayheadVisible = useCallback(
+    (playheadMs: number, viewportWidthPx: number, zoom: number) => {
+      const visibleMs = visibleTimelineMs(viewportWidthPx, zoom)
+      const maxScroll = maxTimelineScroll(durationMs, viewportWidthPx, zoom)
+      setScrollMs((prev) => scrollToKeepVisible(prev, playheadMs, visibleMs, maxScroll))
+    },
+    [durationMs]
+  )
+
+  /** 相對捲動（給拖曳到畫面邊緣時的持續自動捲動用） */
+  const scrollBy = useCallback(
+    (deltaMs: number, viewportWidthPx: number, zoom: number) => {
+      const maxScroll = maxTimelineScroll(durationMs, viewportWidthPx, zoom)
+      setScrollMs((prev) => Math.max(0, Math.min(maxScroll, prev + deltaMs)))
+    },
+    [durationMs]
+  )
+
   const centerPlayhead = useCallback(
     (playheadMs: number, viewportWidthPx: number, zoom: number) => {
       const visibleMs = visibleTimelineMs(viewportWidthPx, zoom)
@@ -136,6 +160,8 @@ export function useTimelineViewport(durationMs: number) {
     zoomAt,
     scrollTo,
     followPlayhead,
+    keepPlayheadVisible,
+    scrollBy,
     centerPlayhead,
     zoomCenteredAt,
     resetViewport
