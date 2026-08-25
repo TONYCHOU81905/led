@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { LedProject, RoleDefinition, TimelineEventUI, TimelineKeyframe } from '../../shared/types/project'
-import { formatMsToTime, parseTimeToMs } from '../../shared/timeParse'
-import { deleteEvent, newEventId, updateEvent } from '../../shared/projectMutations'
+import { formatMsToTime, parseTimeToMs, tryParseTimeToMs } from '../../shared/timeParse'
+import { newEventId, updateEvent } from '../../shared/projectMutations'
 import { clipFromEvent, pasteClip, type TimelineClipClipboard } from '../../shared/timelineClipboard'
 import { compileProjectRole, configChecksum } from '../../shared/configCompiler'
 import { defaultCompileOptions, deviceConfigFilename } from '../../shared/deviceConfigDefaults'
@@ -10,6 +10,7 @@ import { CopyTimelineControl } from './CopyTimelineControl'
 import { DancerPreviewPanel } from '../preview/DancerPreviewPanel'
 import { EventInspector } from './EventInspector'
 import { TimelineCanvas } from './TimelineCanvas'
+import { applyDurationToSelection, buildSelectionPatch } from './batchPatch'
 import { useSnapGrid } from './hooks/useSnapGrid'
 import {
   maxTimelineScroll,
@@ -45,7 +46,8 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
   const [snapSubdivision, setSnapSubdivision] = useState(4)
   const { snapTime } = useSnapGrid(project.project.bpm, snapEnabled, snapSubdivision)
   const [playheadMs, setPlayheadMs] = useState(0)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const selectedId = selectedIds.length > 0 ? selectedIds[selectedIds.length - 1] : null
   const [musicUrl, setMusicUrl] = useState<string | null>(null)
   const [waveformPeaks, setWaveformPeaks] = useState<number[] | null>(null)
   const [musicLoading, setMusicLoading] = useState(false)
@@ -313,6 +315,7 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
       const key = e.key.toLowerCase()
 
       if (mod && key === 'c') {
+        // 多選時語意複雜（單一 clipboard 只放得下一個 clip），維持只作用在主選取（selectedId，即選取集合中最後一個）
         if (!selectedId) return
         const source = role.events.find((ev) => ev.id === selectedId)
         if (!source) return
@@ -324,44 +327,53 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
       }
 
       if (mod && key === 'v') {
+        // 貼上永遠只產生一個新 clip 於 playhead，與選取集合無關，貼完後單選新 clip
         const clip = clipClipboardRef.current
         if (!clip) return
         e.preventDefault()
         const pasted = pasteClip(clip, playheadMs, durationMs, snapTime)
         setEvents([...role.events, pasted])
-        setSelectedId(pasted.id)
+        setSelectedIds([pasted.id])
         setCopyError(null)
         setCopyNotice(`已貼上 clip 於 ${pasted.from}`)
         return
       }
 
       if (mod && key === 'd') {
-        if (!selectedId) return
-        const source = role.events.find((ev) => ev.id === selectedId)
-        if (!source) return
+        // 多選時對整個集合作用：每個選取的 clip 都複製並偏移一拍，選取結果變成新複製出的那一組
+        if (selectedIds.length === 0) return
+        const sources = role.events.filter((ev) => selectedIds.includes(ev.id))
+        if (sources.length === 0) return
         e.preventDefault()
         const beatMs = 60000 / project.project.bpm
-        const dup: TimelineEventUI = {
+        const dups: TimelineEventUI[] = sources.map((source) => ({
           ...source,
           id: newEventId(),
           from: formatMsToTime(parseTimeToMs(source.from) + beatMs),
           to: formatMsToTime(parseTimeToMs(source.to) + beatMs)
-        }
-        setEvents([...role.events, dup])
-        setSelectedId(dup.id)
+        }))
+        setEvents([...role.events, ...dups])
+        setSelectedIds(dups.map((d) => d.id))
+        return
+      }
+
+      if (e.key === 'Escape') {
+        setSelectedIds([])
         return
       }
 
       if (e.key !== 'Delete' && e.key !== 'Backspace') return
-      if (!selectedId) return
+      // 刪除對整個選取集合作用
+      if (selectedIds.length === 0) return
       e.preventDefault()
-      onProjectChange(deleteEvent(project, role.role_id, selectedId))
-      setSelectedId(null)
+      setEvents(role.events.filter((ev) => !selectedIds.includes(ev.id)))
+      setSelectedIds([])
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [
     selectedId,
+    selectedIds,
     project,
     role.role_id,
     role.events,
@@ -374,7 +386,28 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
 
   const patchSelected = (patch: Partial<TimelineEventUI>) => {
     if (!selectedId) return
-    onProjectChange(updateEvent(project, role.role_id, selectedId, patch))
+    // 單選走原本的路徑；多選時由 buildSelectionPatch 決定哪些欄位可以套用到整組
+    // （顏色 / 效果 / 優先權 / 一般 params 可以；絕對時間、發亮部位、路徑群組不行）
+    if (selectedIds.length <= 1) {
+      onProjectChange(updateEvent(project, role.role_id, selectedId, patch))
+      return
+    }
+    setEvents(buildSelectionPatch(role.events, selectedId, selectedIds, patch))
+  }
+
+  /** 多選時把整組 clip 統一設成同一個片段長度（各自固定開頭、只動結尾）。 */
+  const patchSelectedDuration = (clipMs: number) => {
+    if (selectedIds.length <= 1) return
+    setEvents(
+      applyDurationToSelection(
+        role.events,
+        selectedIds,
+        clipMs,
+        tryParseTimeToMs,
+        formatMsToTime,
+        durationMs
+      )
+    )
   }
 
   const importMusic = async () => {
@@ -458,7 +491,7 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
       priority: 10
     }
     setEvents([...role.events, ev])
-    setSelectedId(ev.id)
+    setSelectedIds([ev.id])
   }
 
   const buildDeviceConfig = () =>
@@ -499,9 +532,9 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
   }
 
   const deleteSelected = () => {
-    if (!selectedId) return
-    onProjectChange(deleteEvent(project, role.role_id, selectedId))
-    setSelectedId(null)
+    if (selectedIds.length === 0) return
+    setEvents(role.events.filter((ev) => !selectedIds.includes(ev.id)))
+    setSelectedIds([])
   }
 
   return (
@@ -678,10 +711,10 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
               zoomPxPerMs={zoomPxPerMs}
               snapTime={snapTime}
               playheadMs={playheadMs}
-              selectedId={selectedId}
+              selectedIds={selectedIds}
               waveformPeaks={waveformPeaks}
               keyframes={role.keyframes}
-              onSelect={setSelectedId}
+              onSelectionChange={setSelectedIds}
               onEventsChange={setEvents}
               onPlayheadChange={setPlayhead}
               onKeyframesChange={setKeyframes}
@@ -709,7 +742,10 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
           onDelete={deleteSelected}
           allEvents={role.events}
           onEventsChange={setEvents}
-          onSelect={setSelectedId}
+          onSelect={(id) => setSelectedIds(id ? [id] : [])}
+          selectedCount={selectedIds.length}
+          maxTimeMs={durationMs}
+          onPatchDurationAll={patchSelectedDuration}
         />
       ) : (
         <aside className="timeline-inspector timeline-inspector-empty">

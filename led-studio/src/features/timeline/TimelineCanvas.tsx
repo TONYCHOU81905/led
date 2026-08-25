@@ -30,10 +30,10 @@ export interface TimelineCanvasProps {
   zoomPxPerMs: number
   snapTime: (ms: number) => number
   playheadMs: number
-  selectedId: string | null
+  selectedIds: string[]
   waveformPeaks?: number[] | null
   keyframes?: TimelineKeyframe[]
-  onSelect: (id: string | null) => void
+  onSelectionChange: (ids: string[]) => void
   onEventsChange: (events: TimelineEventUI[]) => void
   onPlayheadChange: (ms: number) => void
   onKeyframesChange?: (keyframes: TimelineKeyframe[]) => void
@@ -57,6 +57,10 @@ interface DragState {
   moveStarted?: boolean
   /** 只有單一部位的 clip 才允許拖曳換 track；跨部位路徑 clip 的 targets 不可被覆寫 */
   allowPartReassign?: boolean
+  /** move 模式下，拖曳開始時整個選取集合裡每個 event 的原始 start/end 快照 */
+  origById?: Record<string, { start: number; end: number }>
+  /** 一般點擊（非 mod、非 shift）時記錄的 id：放開時若沒有真的拖曳，就把選取收斂成只有這一個 */
+  clickCollapseId?: string
 }
 
 interface ClipPreview {
@@ -66,6 +70,7 @@ interface ClipPreview {
   color?: string
   label?: string
   selected?: boolean
+  primary?: boolean
   ghost?: boolean
   showLeftHandle?: boolean
   showRightHandle?: boolean
@@ -106,6 +111,36 @@ function msToFromTo(startMs: number, endMs: number): { from: string; to: string 
     from: formatMsToTime(Math.max(0, startMs)),
     to: formatMsToTime(Math.max(0, endMs))
   }
+}
+
+/**
+ * 對 origById 快照裡的每個 event 套用同一個時間位移 delta（純函式，方便單獨測試）。
+ * - 不在 origById 裡的 event 完全不動。
+ * - 若套用 delta 後有任何 event 的 newStart 會小於 0，整組的 delta 會往回調整，
+ *   讓「最早」的那個剛好停在 0——整組一起停，不會各自被夾成不同位移而散開。
+ */
+export function applyGroupDelta(
+  events: TimelineEventUI[],
+  origById: Record<string, { start: number; end: number }>,
+  delta: number
+): TimelineEventUI[] {
+  const ids = Object.keys(origById)
+  if (ids.length === 0) return events
+
+  let minStart = Infinity
+  for (const id of ids) {
+    minStart = Math.min(minStart, origById[id].start)
+  }
+  const clampedDelta = minStart + delta < 0 ? -minStart : delta
+
+  return events.map((e) => {
+    const orig = origById[e.id]
+    if (!orig) return e
+    const newStart = orig.start + clampedDelta
+    const newEnd = newStart + (orig.end - orig.start)
+    const { from, to } = msToFromTo(newStart, newEnd)
+    return { ...e, from, to }
+  })
 }
 
 function patchEvent(
@@ -222,8 +257,8 @@ export function TimelineCanvas(props: TimelineCanvasProps) {
     ctx.globalAlpha = 1
 
     if (clip.selected && !clip.ghost) {
-      ctx.strokeStyle = '#f8fafc'
-      ctx.lineWidth = 2
+      ctx.strokeStyle = clip.primary ? '#ffffff' : '#f8fafc'
+      ctx.lineWidth = clip.primary ? 3 : 2
       ctx.stroke()
       ctx.fillStyle = 'rgba(255,255,255,0.85)'
       if (clip.showLeftHandle !== false) ctx.fillRect(x1 + 1, barY + 2, 4, barH - 4)
@@ -333,6 +368,9 @@ export function TimelineCanvas(props: TimelineCanvasProps) {
     }
 
     const clipRectByEventId = new Map<string, { x1: number; x2: number; y: number }>()
+    const selectedIdSet = new Set(props.selectedIds)
+    const primaryId =
+      props.selectedIds.length > 0 ? props.selectedIds[props.selectedIds.length - 1] : null
 
     trackOrder.forEach((partId, i) => {
       const y = tracksTop + i * TRACK_HEIGHT
@@ -359,7 +397,8 @@ export function TimelineCanvas(props: TimelineCanvasProps) {
               ...clip,
               color: ev.color,
               label,
-              selected: props.selectedId === ev.id,
+              selected: selectedIdSet.has(ev.id),
+              primary: primaryId === ev.id,
               showLeftHandle: clip.startMs === eventStart,
               showRightHandle: clip.endMs === eventEnd
             },
@@ -507,9 +546,7 @@ export function TimelineCanvas(props: TimelineCanvasProps) {
     }
 
     if (!drag.eventId) return
-    const dur = drag.origEndMs - drag.origStartMs
-    let newStart = drag.origStartMs
-    let newEnd = drag.origEndMs
+    const eventId = drag.eventId
 
     if (drag.mode === 'move') {
       // 單純點擊（位移小於門檻）只做選取，不進入拖曳，避免誤改 clip
@@ -523,27 +560,40 @@ export function TimelineCanvas(props: TimelineCanvasProps) {
       drag.moveStarted = true
       const anchor = props.snapTime(xToTime(drag.startMouseX, props.scrollMs, props.zoomPxPerMs))
       const delta = t - anchor
-      newStart = Math.max(0, props.snapTime(drag.origStartMs + delta))
-      newEnd = newStart + dur
       drag.targetPartId = drag.allowPartReassign ? partAtY(my, tracksTop) : drag.origPartId
-    } else if (drag.mode === 'resize-left') {
+
+      // origById 是拖曳開始時整個選取集合的快照；只有被按住的那一個會用 snapTime 算 delta，
+      // 其他成員套用同一個 delta，整組相對關係完全不變。
+      const origById = drag.origById ?? { [eventId]: { start: drag.origStartMs, end: drag.origEndMs } }
+      let next = applyGroupDelta(props.events, origById, delta)
+
+      // 只有「單一部位的 clip 被垂直拖到別的 track」才改 targets；
+      // 跨部位路徑 clip、多選、與純水平移動都保留原本的 targets。
+      if (drag.allowPartReassign && drag.targetPartId && drag.targetPartId !== drag.origPartId) {
+        const targetPartId = drag.targetPartId
+        next = next.map((e) => (e.id === eventId ? { ...e, targets: [targetPartId] } : e))
+      }
+
+      liveEventsRef.current = next
+      setLiveEvents(next)
+      return
+    }
+
+    let newStart = drag.origStartMs
+    let newEnd = drag.origEndMs
+
+    if (drag.mode === 'resize-left') {
       newStart = Math.min(t, drag.origEndMs - MIN_CLIP_MS)
       newEnd = drag.origEndMs
     } else if (drag.mode === 'resize-right') {
       newStart = drag.origStartMs
       newEnd = Math.max(t, drag.origStartMs + MIN_CLIP_MS)
+    } else {
+      return
     }
 
-    // 只有「單一部位的 clip 被垂直拖到別的 track」才改 targets；
-    // 跨部位路徑 clip 與純水平移動 / resize 都保留原本的 targets。
-    const nextPartId =
-      drag.mode === 'move' &&
-      drag.allowPartReassign &&
-      drag.targetPartId &&
-      drag.targetPartId !== drag.origPartId
-        ? drag.targetPartId
-        : undefined
-    const next = patchEvent(displayEvents, drag.eventId, newStart, newEnd, nextPartId)
+    // resize 一律只作用被拖曳的那一個 event，即使目前是多選狀態。
+    const next = patchEvent(displayEvents, eventId, newStart, newEnd)
     liveEventsRef.current = next
     setLiveEvents(next)
   }
@@ -581,11 +631,73 @@ export function TimelineCanvas(props: TimelineCanvasProps) {
     if (!hit) return
 
     if (hit.eventId) {
-      props.onSelect(hit.eventId)
-      const ev = displayEvents.find((x) => x.id === hit.eventId)!
+      const id = hit.eventId
+      const mode: DragMode = hit.edge === 'left' ? 'resize-left' : hit.edge === 'right' ? 'resize-right' : 'move'
+      const isMod = e.metaKey || e.ctrlKey
+      const isShift = e.shiftKey
+      const current = props.selectedIds
+      const wasSelected = current.includes(id)
+
+      let nextSelection: string[]
+      let clickCollapseId: string | undefined
+
+      if (mode !== 'move') {
+        // resize 不改變多選集合的組成，只確保被拖曳的 clip 有被選取
+        nextSelection = wasSelected ? current : [id]
+      } else if (isShift) {
+        const primaryId = current.length > 0 ? current[current.length - 1] : id
+        const primaryEvent = displayEvents.find((x) => x.id === primaryId)
+        if (primaryEvent && primaryId !== id) {
+          const aStart = tryParseTimeToMs(primaryEvent.from)
+          const bStart = tryParseTimeToMs(displayEvents.find((x) => x.id === id)?.from ?? '')
+          if (aStart !== null && bStart !== null) {
+            const lo = Math.min(aStart, bStart)
+            const hi = Math.max(aStart, bStart)
+            const between = eventsForPart(displayEvents, hit.partId)
+              .filter((ev) => {
+                const s = tryParseTimeToMs(ev.from)
+                return s !== null && s >= lo && s <= hi
+              })
+              .map((ev) => ev.id)
+            const merged = new Set(current)
+            for (const bid of between) merged.add(bid)
+            merged.delete(id)
+            nextSelection = [...merged, id]
+          } else {
+            nextSelection = wasSelected ? current : [...current, id]
+          }
+        } else {
+          nextSelection = wasSelected ? current : [...current, id]
+        }
+      } else if (isMod) {
+        // Cmd/Ctrl 點擊：toggle
+        nextSelection = wasSelected ? current.filter((x) => x !== id) : [...current, id]
+      } else {
+        // 一般點擊：已選取的 clip 保持整個集合不變（才能拖動整組）；
+        // 未選取則單選它。放開時若沒有真的拖曳，onPointerUp 會收斂成單選。
+        nextSelection = wasSelected ? current : [id]
+        clickCollapseId = id
+      }
+
+      props.onSelectionChange(nextSelection)
+
+      const ev = displayEvents.find((x) => x.id === id)!
+      let origById: Record<string, { start: number; end: number }> | undefined
+      if (mode === 'move') {
+        origById = {}
+        for (const sid of nextSelection) {
+          const sev = displayEvents.find((x) => x.id === sid)
+          if (!sev) continue
+          const s = tryParseTimeToMs(sev.from)
+          const en = tryParseTimeToMs(sev.to)
+          if (s === null || en === null) continue
+          origById[sid] = { start: s, end: en }
+        }
+      }
+
       dragRef.current = {
-        mode: hit.edge === 'left' ? 'resize-left' : hit.edge === 'right' ? 'resize-right' : 'move',
-        eventId: hit.eventId,
+        mode,
+        eventId: id,
         partId: hit.partId,
         origPartId: hit.partId,
         targetPartId: hit.partId,
@@ -593,11 +705,13 @@ export function TimelineCanvas(props: TimelineCanvasProps) {
         startMouseY: my,
         origStartMs: parseTimeToMs(ev.from),
         origEndMs: parseTimeToMs(ev.to),
-        allowPartReassign: ev.targets.length <= 1
+        allowPartReassign: nextSelection.length <= 1 && ev.targets.length <= 1,
+        origById,
+        clickCollapseId
       }
       setCursor(hit.edge ? 'ew-resize' : 'grabbing')
     } else {
-      props.onSelect(null)
+      props.onSelectionChange([])
       dragRef.current = {
         mode: 'create',
         partId: hit.partId,
@@ -653,13 +767,19 @@ export function TimelineCanvas(props: TimelineCanvasProps) {
           priority: 10
         }
         props.onEventsChange([...props.events, newEv])
-        props.onSelect(newEv.id)
+        props.onSelectionChange([newEv.id])
       }
       setCreatePreview(null)
     } else if (drag && liveEventsRef.current) {
       props.onEventsChange(liveEventsRef.current)
       liveEventsRef.current = null
       setLiveEvents(null)
+    }
+
+    // 一般點擊（非拖曳）已選取的 clip 時，pointerDown 保留了整組選取以便拖動；
+    // 放開時若沒有真的移動（moveStarted 仍為 false），就收斂成只選這一個，符合「點一下＝單選」的直覺。
+    if (drag?.mode === 'move' && !drag.moveStarted && drag.clickCollapseId) {
+      props.onSelectionChange([drag.clickCollapseId])
     }
 
     dragRef.current = null

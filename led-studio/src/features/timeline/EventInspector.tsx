@@ -1,5 +1,7 @@
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import type { LedProject, PartDefinition, TimelineEventParams, TimelineEventUI } from '../../shared/types/project'
-import { tryParseTimeToMs } from '../../shared/timeParse'
+import { formatMsToTime, tryParseTimeToMs } from '../../shared/timeParse'
+import { validateDuration, validateRange, validateTimeField } from './timeFieldDraft'
 import {
   DIRECTION_OPTIONS,
   EFFECT_PRESETS,
@@ -30,6 +32,12 @@ interface EventInspectorProps {
   allEvents: TimelineEventUI[]
   onEventsChange: (events: TimelineEventUI[]) => void
   onSelect: (id: string | null) => void
+  /** 目前選取的 clip 數量；> 1 時屬性修改會套用到整組 */
+  selectedCount?: number
+  /** 音樂總長，結束時間與片段長度不得超出 */
+  maxTimeMs?: number
+  /** 多選時統一設定片段長度（各自固定開頭、只動結尾） */
+  onPatchDurationAll?: (clipMs: number) => void
 }
 
 function supportsSecondaryColor(effect: TimelineEventUI['effect']): boolean {
@@ -60,12 +68,140 @@ export function EventInspector({
   onDelete,
   allEvents,
   onEventsChange,
-  onSelect
+  onSelect,
+  selectedCount = 1,
+  maxTimeMs,
+  onPatchDurationAll
 }: EventInspectorProps) {
   const { trackParts } = buildTrackMeta(parts)
   const partId = event.targets[0] ?? trackParts[0]?.id ?? 'body'
   const durationMs = (tryParseTimeToMs(event.to) ?? 0) - (tryParseTimeToMs(event.from) ?? 0)
   const params = event.params
+
+  // ---- 時間欄位草稿（開始時間 / 結束時間 / 片段長度）----
+  // 使用者輸入時只更新 local draft，只有合法（格式 + 語意）才 onPatch 寫回專案，
+  // 避免輸入到一半的不合法字串污染資料（P1 修復）。
+  const [fromDraft, setFromDraft] = useState(event.from)
+  const [toDraft, setToDraft] = useState(event.to)
+  const [durationDraft, setDurationDraft] = useState(() => String(Math.max(0, durationMs)))
+  const [fromError, setFromError] = useState<string | null>(null)
+  const [toError, setToError] = useState<string | null>(null)
+  const [durationError, setDurationError] = useState<string | null>(null)
+
+  // 記住「上一次從 props 看到的值」，只有 props 真的變了（外部拖曳 clip / 切換 clip）
+  // 才覆蓋 local draft，避免蓋掉使用者正在打的字。
+  const lastPropsRef = useRef({ id: event.id, from: event.from, to: event.to })
+
+  useEffect(() => {
+    const last = lastPropsRef.current
+    const idChanged = last.id !== event.id
+    const fromChanged = idChanged || last.from !== event.from
+    const toChanged = idChanged || last.to !== event.to
+
+    if (fromChanged) {
+      setFromDraft(event.from)
+      setFromError(null)
+    }
+    if (toChanged) {
+      setToDraft(event.to)
+      setToError(null)
+    }
+    if (fromChanged || toChanged) {
+      const nextDuration = (tryParseTimeToMs(event.to) ?? 0) - (tryParseTimeToMs(event.from) ?? 0)
+      setDurationDraft(String(Math.max(0, nextDuration)))
+      setDurationError(null)
+    }
+
+    lastPropsRef.current = { id: event.id, from: event.from, to: event.to }
+  }, [event.id, event.from, event.to])
+
+  const handleFromChange = (raw: string) => {
+    setFromDraft(raw)
+    const parsed = validateTimeField(raw)
+    if (!parsed.ok || parsed.ms === undefined) {
+      setFromError(parsed.error ?? '時間格式需為 mm:ss 或 mm:ss.mmm')
+      return
+    }
+    const toMs = tryParseTimeToMs(event.to) ?? 0
+    const range = validateRange(parsed.ms, toMs, maxTimeMs)
+    if (!range.ok) {
+      setFromError(range.error ?? '開始時間必須早於結束時間')
+      return
+    }
+    setFromError(null)
+    onPatch({ from: raw })
+  }
+
+  const handleToChange = (raw: string) => {
+    setToDraft(raw)
+    const parsed = validateTimeField(raw)
+    if (!parsed.ok || parsed.ms === undefined) {
+      setToError(parsed.error ?? '時間格式需為 mm:ss 或 mm:ss.mmm')
+      return
+    }
+    const fromMs = tryParseTimeToMs(event.from) ?? 0
+    const range = validateRange(fromMs, parsed.ms, maxTimeMs)
+    if (!range.ok) {
+      setToError(range.error ?? '開始時間必須早於結束時間')
+      return
+    }
+    setToError(null)
+    onPatch({ to: raw })
+  }
+
+  const handleDurationChange = (raw: string) => {
+    setDurationDraft(raw)
+    const fromMs = tryParseTimeToMs(event.from) ?? 0
+    const result = validateDuration(raw, fromMs, 10, maxTimeMs)
+    if (!result.ok || result.ms === undefined) {
+      setDurationError(result.error ?? '片段長度須為正整數（毫秒）')
+      return
+    }
+    setDurationError(null)
+    // 多選時整組統一長度；單選維持只改自己的結束時間
+    if (selectedCount > 1 && onPatchDurationAll) {
+      onPatchDurationAll(result.ms - fromMs)
+      return
+    }
+    onPatch({ to: formatMsToTime(result.ms) })
+  }
+
+  const revertFrom = () => {
+    setFromDraft(event.from)
+    setFromError(null)
+  }
+  const revertTo = () => {
+    setToDraft(event.to)
+    setToError(null)
+  }
+  const revertDuration = () => {
+    setDurationDraft(String(Math.max(0, durationMs)))
+    setDurationError(null)
+  }
+
+  const handleFromBlur = () => {
+    if (fromError) revertFrom()
+  }
+  const handleToBlur = () => {
+    if (toError) revertTo()
+  }
+  const handleDurationBlur = () => {
+    if (durationError) revertDuration()
+  }
+
+  const handleTimeFieldKeyDown = (
+    e: KeyboardEvent<HTMLInputElement>,
+    hasError: boolean,
+    revert: () => void
+  ) => {
+    if (e.key === 'Enter') {
+      if (hasError) revert()
+      e.currentTarget.blur()
+    } else if (e.key === 'Escape') {
+      revert()
+      e.currentTarget.blur()
+    }
+  }
   const secondaryColor = readStringParam(params, 'secondary_color', 'silver_white')
   const fadeCurve = readStringParam(params, 'fade_curve', 'ease_in_out')
   const direction = readStringParam(params, 'direction', 'auto')
@@ -181,6 +317,13 @@ export function EventInspector({
         </div>
       </div>
 
+      {selectedCount > 1 && (
+        <div className="inspector-section" style={{ color: '#7dd3fc', fontSize: '0.82em' }}>
+          已選取 {selectedCount} 個 clip · 主色／次色／效果／優先權／速度等參數會套用到全部，
+          片段長度會統一設定；開始時間、結束時間、發亮部位與流動路徑只改目前這一個。
+        </div>
+      )}
+
       <div className="inspector-section">
         <span className="inspector-label">主要發亮部位</span>
         <div className="part-segmented" role="group" aria-label="部位">
@@ -209,16 +352,45 @@ export function EventInspector({
 
       <div className="inspector-row">
         <label>
-          <span className="inspector-label">開始時間</span>
-          <input value={event.from} onChange={(e) => onPatch({ from: e.target.value })} />
+          <span className="inspector-label">開始時間（只移動開頭，結束時間不動）</span>
+          <input
+            value={fromDraft}
+            onChange={(e) => handleFromChange(e.target.value)}
+            onBlur={handleFromBlur}
+            onKeyDown={(e) => handleTimeFieldKeyDown(e, !!fromError, revertFrom)}
+            style={fromError ? { borderColor: '#e5484d', outlineColor: '#e5484d' } : undefined}
+            aria-invalid={!!fromError}
+          />
+          {fromError && (
+            <span style={{ color: '#e5484d', fontSize: '0.8em' }}>{fromError}</span>
+          )}
         </label>
         <label>
-          <span className="inspector-label">結束時間</span>
-          <input value={event.to} onChange={(e) => onPatch({ to: e.target.value })} />
+          <span className="inspector-label">結束時間（只移動結尾，開始時間不動）</span>
+          <input
+            value={toDraft}
+            onChange={(e) => handleToChange(e.target.value)}
+            onBlur={handleToBlur}
+            onKeyDown={(e) => handleTimeFieldKeyDown(e, !!toError, revertTo)}
+            style={toError ? { borderColor: '#e5484d', outlineColor: '#e5484d' } : undefined}
+            aria-invalid={!!toError}
+          />
+          {toError && <span style={{ color: '#e5484d', fontSize: '0.8em' }}>{toError}</span>}
         </label>
         <div className="inspector-duration">
-          <span className="inspector-label">片段長度</span>
-          <strong>{durationMs} ms</strong>
+          <span className="inspector-label">片段長度（固定開頭，調整結尾）</span>
+          <input
+            value={durationDraft}
+            onChange={(e) => handleDurationChange(e.target.value)}
+            onBlur={handleDurationBlur}
+            onKeyDown={(e) => handleTimeFieldKeyDown(e, !!durationError, revertDuration)}
+            style={durationError ? { borderColor: '#e5484d', outlineColor: '#e5484d' } : undefined}
+            aria-invalid={!!durationError}
+          />
+          <span> ms</span>
+          {durationError && (
+            <span style={{ color: '#e5484d', fontSize: '0.8em' }}>{durationError}</span>
+          )}
         </div>
       </div>
 
