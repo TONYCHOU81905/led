@@ -13,6 +13,26 @@ export function maxTimelineScroll(
   return Math.max(0, durationMs - visibleTimelineMs(viewportWidthPx, zoomPxPerMs))
 }
 
+/**
+ * 拖整曲進度條 seek 時，判斷是否該把 timeline 重新捲到讓 playhead 居中。
+ *
+ * calculateFollowScroll 的 12%~74% dead zone 是給「播放中自動跟隨」用的
+ * （避免每一幀都在滑動）。但手動拖進度條是明確的 seek 手勢，使用者期待
+ * timeline 跟著左右走，dead zone 太寬會讓人以為功能壞了 —— 所以這裡用比較
+ * 窄的舒適區，超出就居中。
+ */
+export function needsRecenter(
+  playheadMs: number,
+  scrollMs: number,
+  visibleMs: number,
+  lo = 0.3,
+  hi = 0.7
+): boolean {
+  if (visibleMs <= 0) return false
+  const rel = (playheadMs - scrollMs) / visibleMs
+  return rel < lo || rel > hi
+}
+
 export function calculateFollowScroll(
   previousScrollMs: number,
   playheadMs: number,

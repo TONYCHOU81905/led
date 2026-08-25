@@ -14,6 +14,7 @@ import { applyDurationToSelection, buildSelectionPatch } from './batchPatch'
 import { useSnapGrid } from './hooks/useSnapGrid'
 import {
   maxTimelineScroll,
+  needsRecenter,
   useTimelineViewport,
   visibleTimelineMs
 } from './hooks/useTimelineViewport'
@@ -454,14 +455,12 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
 
   const setPlayheadFromProgress = (ms: number) => {
     setPlayhead(ms)
-    if (followEnabledRef.current) {
-      followPlayhead(ms, workspaceWidth, zoomRef.current)
-      return
+    // 拖整曲進度條是明確的 seek 手勢 —— timeline 要持續跟著左右走。
+    // 不能只靠 followPlayhead：它的 12%~74% dead zone 是給播放中自動跟隨用的，
+    // 手動拖曳時會讓 timeline 在中間大段區間完全不動，看起來像功能不見了。
+    if (needsRecenter(ms, scrollMs, visibleMs)) {
+      centerPlayhead(ms, workspaceWidth, zoomRef.current)
     }
-    // 拖動 playhead 到可見範圍邊緣（左右各 10%）或超出範圍時，即使沒開「跟隨播放」也要自動捲動進來
-    const edgeMs = visibleMs * 0.1
-    const nearOrOutside = ms < scrollMs + edgeMs || ms > scrollMs + visibleMs - edgeMs
-    if (nearOrOutside) followPlayhead(ms, workspaceWidth, zoomRef.current)
   }
 
   const enableFollow = () => {
