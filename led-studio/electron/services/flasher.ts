@@ -158,12 +158,21 @@ function buildEsptoolArgs(
     '--after',
     'hard_reset',
     'write_flash',
+    // 一律用 keep，不要覆寫映像檔頭裡的 flash 設定。
+    //
+    // 映像是 pio 依 platformio.ini 編譯的，檔頭（byte2=flash_mode、
+    // byte3=size/freq）已經正確。boardTargets.ts 手寫的那組值與編譯產物之間
+    // 沒有任何同步機制，一旦對不上，esptool 會改寫檔頭而燒出開不了機的板子：
+    // n16r8 的 flashMode 寫成 'qio' 但編譯產物是 DIO，燒進去後 bootloader
+    // 改用 QIO 讀 flash（eFuse 實為 quad），只載入第一個 segment 就失敗並
+    // 觸發看門狗重置 —— 表現為無窮 boot loop。pio upload 不覆寫檔頭，所以
+    // 同一塊板子用指令燒就正常，用 app 燒就 loop。
     '--flash_mode',
-    board.flashMode,
+    'keep',
     '--flash_freq',
-    board.flashFreq,
+    'keep',
     '--flash_size',
-    board.flashSize
+    'keep'
   ]
 
   if (board.noCompress) {

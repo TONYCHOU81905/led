@@ -9,6 +9,14 @@ export interface FlashBoardTarget {
   bootloaderOffset: number
   /** Factory app offset — matches partitions.csv / partitions-esp32.csv */
   flashOffset: number
+  /**
+   * 以下三個 flash 參數僅供顯示與文件記錄，**不會**傳給 esptool。
+   *
+   * 實際燒錄一律用 --flash_mode/--flash_freq/--flash_size keep，尊重 pio 依
+   * platformio.ini 編譯出來的映像檔頭。這裡的值與編譯產物之間沒有同步機制，
+   * 曾經因為 n16r8 寫成 qio（實際產物是 dio）而讓 esptool 改寫檔頭，燒出
+   * 無法開機的板子。改這裡不會改變燒錄行為 —— 要改請改 platformio.ini。
+   */
   flashSize: '4MB' | '8MB' | '16MB'
   flashMode: 'dio' | 'qio'
   flashFreq: '40m' | '80m'
@@ -31,7 +39,8 @@ export const FLASH_BOARD_TARGETS: FlashBoardTarget[] = [
     bootloaderOffset: 0x0,
     flashOffset: 0x10000,
     flashSize: '16MB',
-    flashMode: 'qio',
+    // 與編譯產物一致：bin 檔頭 byte2 為 0x02(DIO)。原本寫 qio 與產物不符。
+    flashMode: 'dio',
     flashFreq: '80m',
     // Match platformio.ini — usbserial/CH340 often dies after stub at 921600
     uploadBaud: 115200,
