@@ -31,6 +31,13 @@ const CHUNK_SIZE = 240
 const SETTLE_AFTER_WIFI_MS = 500
 const PING_RETRY_MS = 1500
 const PING_RETRY_COUNT = 12
+/**
+ * ping 只是探測「板子活了沒」，不該用跟資料傳輸一樣的 60 秒。
+ * 板子重開機（含 3 秒 LED 自檢）約需 4 秒才會回應，這裡用 2.5 秒配合
+ * 12 次重試 ≈ 48 秒的涵蓋範圍，足夠等到開機完成。
+ * 用 60 秒的話，第一次 ping 就要等滿一分鐘才算失敗，使用者看起來像當掉。
+ */
+const PING_TIMEOUT_MS = 2500
 
 type SerialPortModule = typeof import('serialport')
 type ReadlineParserModule = typeof import('@serialport/parser-readline')
@@ -80,7 +87,7 @@ async function withOpenPort<T>(
   fn: (
     port: InstanceType<SerialPortModule['SerialPort']>,
     parser: InstanceType<ReadlineParserModule['ReadlineParser']>,
-    send: <R>(payload: JsonPayload) => Promise<R>
+    send: <R>(payload: JsonPayload, timeoutMs?: number) => Promise<R>
   ) => Promise<T>
 ): Promise<T> {
   const { SerialPort, ReadlineParser } = await loadSerialModules()
@@ -100,13 +107,13 @@ async function withOpenPort<T>(
     let pending: ((line: string) => void) | null = null
     let commandDiagnostics: string[] = []
 
-    const send = <R>(payload: JsonPayload): Promise<R> =>
+    const send = <R>(payload: JsonPayload, timeoutMs?: number): Promise<R> =>
       new Promise<R>((res, rej) => {
         commandDiagnostics = []
         const timer = setTimeout(() => {
           pending = null
           rej(new Error('Serial command timeout'))
-        }, COMMAND_TIMEOUT_MS)
+        }, timeoutMs ?? COMMAND_TIMEOUT_MS)
 
         pending = (line: string) => {
           const trimmed = line.trim()
@@ -167,12 +174,16 @@ async function withOpenPort<T>(
   })
 }
 
-async function sendJsonCommand<T>(path: string, payload: JsonPayload): Promise<T> {
-  return withOpenPort(path, async (_port, _parser, send) => send<T>(payload))
+async function sendJsonCommand<T>(
+  path: string,
+  payload: JsonPayload,
+  timeoutMs?: number
+): Promise<T> {
+  return withOpenPort(path, async (_port, _parser, send) => send<T>(payload, timeoutMs))
 }
 
 export async function pingEsp(path: string): Promise<EspPingResponse> {
-  return sendJsonCommand<EspPingResponse>(path, { cmd: 'ping' })
+  return sendJsonCommand<EspPingResponse>(path, { cmd: 'ping' }, PING_TIMEOUT_MS)
 }
 
 /** Wait until the ESP answers ping (e.g. after WiFi write used to block Serial). */
