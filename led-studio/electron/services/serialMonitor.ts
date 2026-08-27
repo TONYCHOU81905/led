@@ -126,7 +126,21 @@ export async function startMonitor(path: string, onLine: (l: SerialMonitorLine) 
 
     port.open((openErr) => {
       if (openErr) {
-        reject(openErr)
+        // 原始訊息是 "Resource temporarily unavailable Cannot lock port"，
+        // 看不出該怎麼處理。CDC 只有一條通道，最常見的原因就是 port 正被
+        // 別的東西佔著（Studio 正在燒錄或傳 config、外部的 pio device
+        // monitor、或上一個 session 還沒關乾淨）。
+        const raw = openErr.message ?? String(openErr)
+        const locked = /cannot lock port|resource temporarily unavailable|access denied|busy/i.test(raw)
+        reject(
+          locked
+            ? new Error(
+                `無法開啟 ${devicePath}：port 正被其他程式佔用。` +
+                  '請等目前的燒錄／設定指令跑完，並確認沒有另外開著 ' +
+                  `pio device monitor（可用 lsof ${devicePath} 檢查）。原始錯誤：${raw}`
+              )
+            : new Error(`無法開啟 ${devicePath}：${raw}`)
+        )
         return
       }
       currentSession = { path: devicePath, port, onLine }
