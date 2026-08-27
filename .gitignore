@@ -24,3 +24,9 @@ music.mp3
 .env
 .env.*
 !.env.example
+
+# PlatformIO IDE 自動產生的檔案，內含本機絕對路徑（家目錄、toolchain 位置），
+# 換機器就失效；兩者開頭都標明 AUTOMATICALLY GENERATED，pio 會自行重新產生。
+# extensions.json / settings.json / tasks.json 不含絕對路徑，保留在版控中。
+.vscode/c_cpp_properties.json
+.vscode/launch.json
