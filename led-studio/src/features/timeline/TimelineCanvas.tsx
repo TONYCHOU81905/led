@@ -17,7 +17,7 @@ import {
 
 const EDGE_HIT = 8
 /** 指標距離畫面左右緣多少 px 之內就開始自動捲動 */
-const EDGE_SCROLL_PX = 32
+const EDGE_SCROLL_PX = 48
 /** 自動捲動的最高速度（px/幀），實際速度依接近邊緣的程度線性遞增 */
 const EDGE_SCROLL_MAX_PX = 14
 const MIN_CLIP_MS = 50
@@ -39,7 +39,11 @@ export interface TimelineCanvasProps {
   keyframes?: TimelineKeyframe[]
   onSelectionChange: (ids: string[]) => void
   onEventsChange: (events: TimelineEventUI[]) => void
-  onPlayheadChange: (ms: number) => void
+  /**
+   * keepVisible 為 true 代表這次是「拖曳 playhead」造成的變更 —— 呼叫端應該
+   * 順便把畫面推移到讓 playhead 留在可見範圍內。播放中的自動更新不帶這個旗標。
+   */
+  onPlayheadChange: (ms: number, opts?: { keepVisible?: boolean }) => void
   onKeyframesChange?: (keyframes: TimelineKeyframe[]) => void
   onZoomAt?: (anchorMs: number, factor: number) => void
   /**
@@ -599,7 +603,7 @@ export function TimelineCanvas(props: TimelineCanvasProps) {
     if (drag.mode === 'scrub') {
       drag.lastMouseX = mx
       const scrubMs = Math.max(0, Math.min(props.durationMs, xToTime(mx, props.scrollMs, props.zoomPxPerMs)))
-      props.onPlayheadChange(scrubMs)
+      props.onPlayheadChange(scrubMs, { keepVisible: true })
       ensureEdgeScroll()
       return
     }
@@ -679,7 +683,9 @@ export function TimelineCanvas(props: TimelineCanvasProps) {
       }
       setCursor('ew-resize')
       captureRef.current = true
-      props.onPlayheadChange(my >= RULER_HEIGHT ? ms : props.snapTime(ms))
+      props.onPlayheadChange(my >= RULER_HEIGHT ? ms : props.snapTime(ms), {
+        keepVisible: true
+      })
       ;(e.target as HTMLCanvasElement).setPointerCapture(e.pointerId)
       return
     }

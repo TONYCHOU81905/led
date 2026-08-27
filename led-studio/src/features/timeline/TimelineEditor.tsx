@@ -735,7 +735,15 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
               keyframes={role.keyframes}
               onSelectionChange={setSelectedIds}
               onEventsChange={setEvents}
-              onPlayheadChange={setPlayhead}
+              onPlayheadChange={(ms, opts) => {
+                setPlayhead(ms)
+                // 拖曳 playhead 時，只要它接近可見範圍邊緣（margin 10%）就平滑推移畫面。
+                // 這比「指標必須壓進畫布邊緣 48px」好觸發得多，兩者並存：
+                // 一般拖曳靠這裡跟隨，指標真的壓到最邊時才由 rAF 持續加速捲動。
+                if (opts?.keepVisible) {
+                  keepPlayheadVisible(ms, workspaceWidth, zoomRef.current)
+                }
+              }}
               onKeyframesChange={setKeyframes}
               onZoomAt={handleZoomAt}
               onEdgeScroll={handleEdgeScroll}
