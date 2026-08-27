@@ -123,7 +123,8 @@ static void renderStateIndicator(uint32_t now_ms) {
     g_leds.show();
     break;
   case STATE_PAUSED:
-    // hold last frame — no refresh
+    // 不會走到這裡：PAUSED 現在由 loop() 直接 render timeline，
+    // 這樣拖動時間軸才能即時預覽（見 loop 裡的 render_timeline）。
     break;
   case STATE_PLAYING:
     break;
@@ -284,7 +285,15 @@ void loop() {
   if (!g_boot_failed && now_us - last_frame_us >= FRAME_INTERVAL_US) {
     last_frame_us = now_us;
 
-    if (g_state == STATE_PLAYING && g_clock.isPlaying() && !g_timecode_blackout) {
+    // PAUSED 也要依當前時間 render：Studio 端拖動時間軸會送 SEEK，clock 的
+    // music time 跟著更新，燈光就能即時預覽該時間點的畫面。
+    // 原本 PAUSED 是 hold last frame（不刷新），拖時間軸時燈完全不動，
+    // 停在暫停瞬間的殘影，看起來像壞掉。
+    const bool render_timeline =
+        (g_state == STATE_PLAYING && g_clock.isPlaying() && !g_timecode_blackout) ||
+        g_state == STATE_PAUSED;
+
+    if (render_timeline) {
       const uint32_t t = g_clock.musicTimeMs(now_us);
       g_timeline.render(t, g_leds);
     } else {

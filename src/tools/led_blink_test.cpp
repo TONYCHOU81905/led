@@ -36,6 +36,28 @@ static void fillAndShow(const char *label, const CRGB &color, uint32_t hold_ms) 
   delay(hold_ms);
 }
 
+#ifdef TEST_RAW_GPIO
+void setup() {
+  Serial.setRxBufferSize(4096);
+  Serial.begin(115200);
+  delay(600);
+  Serial.println();
+  Serial.println("=== RAW GPIO 方波測試（不使用 FastLED）===");
+  Serial.printf("[raw] GPIO %d 以 1Hz 切換 HIGH/LOW\n", TEST_GPIO);
+  Serial.println("[raw] 用萬用電表量 GPIO 與 GND 之間，應看到 0V <-> 3.3V 交替");
+  Serial.println("[raw] 或用一顆普通 LED 串 220ohm 電阻接在 GPIO 與 GND 之間，應看到閃爍");
+  pinMode(TEST_GPIO, OUTPUT);
+}
+
+void loop() {
+  digitalWrite(TEST_GPIO, HIGH);
+  Serial.println("[raw] HIGH (應為 3.3V)");
+  delay(1000);
+  digitalWrite(TEST_GPIO, LOW);
+  Serial.println("[raw] LOW  (應為 0V)");
+  delay(1000);
+}
+#else
 void setup() {
   Serial.setRxBufferSize(4096);
   Serial.begin(115200);
@@ -71,3 +93,18 @@ void loop() {
   Serial.println("[test] 全暗 1 秒，然後重複");
   delay(1000);
 }
+
+/*
+ * === 附加模式：TEST_RAW_GPIO ===
+ *
+ * 用 -DTEST_RAW_GPIO 編譯時，不走 FastLED，而是把 TEST_GPIO 當一般 GPIO
+ * 以 1Hz 慢速切換 HIGH/LOW。
+ *
+ * 目的：把「腳位有沒有在輸出」跟「WS2812B 通訊是否成功」徹底分開。
+ * WS2812B 的訊號是 800kHz 的窄脈衝，用萬用電表量不到；1Hz 方波則可以直接
+ * 用電表（或一顆普通 LED 串 220Ω 電阻）看到 0V ↔ 3.3V 交替。
+ *
+ *   量得到交替 → 腳位正常，問題在燈條側（電平/共地/DIN/第一顆 LED）
+ *   完全沒變化 → 腳位本身有問題（燒壞、被其他功能佔用、或接錯腳）
+ */
+#endif  // TEST_RAW_GPIO
