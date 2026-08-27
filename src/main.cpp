@@ -178,6 +178,8 @@ void setup() {
   if (!g_boot_failed) g_leds.selfTest(3000);
 #endif
 
+  // 判別假說 2-B：WiFi 中斷是否干擾 FastLED 的 RMT 訊號
+#ifndef DIAG_DISABLE_WIFI
   g_state = STATE_WIFI_CONNECTING;
   if (!g_wifi.connect(g_config.network)) {
     Serial.println("[app] WiFi failed — continuing offline for debug");
@@ -186,6 +188,10 @@ void setup() {
   if (g_wifi.isConnected()) {
     startNetworkServices();
   }
+#else
+  Serial.println("[diag] WiFi disabled (DIAG_DISABLE_WIFI)");
+  g_state = STATE_WIFI_CONNECTING;
+#endif
 
   last_frame_us = esp_timer_get_time();
 }
@@ -232,6 +238,7 @@ void loop() {
     g_status.tick(now_ms, g_config, g_state, g_clock, g_sync_rx);
   }
 
+#ifndef DIAG_DISABLE_WIFI
   if (!wifi_connected) {
     if (g_wifi_was_connected) {
       g_wifi_was_connected = false;
@@ -253,6 +260,7 @@ void loop() {
       g_state = STATE_WAIT_TIMECODE;
     }
   }
+#endif
 
   if (now_ms - g_last_health_log_ms >= HEALTH_LOG_INTERVAL_MS) {
     g_last_health_log_ms = now_ms;

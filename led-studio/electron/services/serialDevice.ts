@@ -125,7 +125,10 @@ async function withOpenPort<T>(
         commandDiagnostics = []
         const timer = setTimeout(() => {
           pending = null
-          rej(new Error('Serial command timeout'))
+          const errorMsg = commandDiagnostics.length > 0
+            ? `Serial command timeout（板子最後輸出：${commandDiagnostics.slice(-3).join(' | ')}）`
+            : 'Serial command timeout（板子完全沒有輸出）'
+          rej(new Error(errorMsg))
         }, timeoutMs ?? COMMAND_TIMEOUT_MS)
 
         pending = (line: string) => {
@@ -159,7 +162,8 @@ async function withOpenPort<T>(
 
     const onData = (data: string) => {
       const trimmed = data.trim()
-      if (trimmed.startsWith('[config]')) {
+      // 收集所有非 JSON 行進 commandDiagnostics，用於 timeout 時顯示板子最後的輸出
+      if (!trimmed.startsWith('{') && trimmed.length > 0) {
         commandDiagnostics.push(trimmed)
         if (commandDiagnostics.length > 8) commandDiagnostics.shift()
       }
