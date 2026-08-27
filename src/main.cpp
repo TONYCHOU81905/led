@@ -26,6 +26,9 @@ static bool g_timecode_blackout = false;
 static uint32_t g_last_wifi_retry_ms = 0;
 static uint32_t g_last_health_log_ms = 0;
 static bool g_wifi_was_connected = false;
+// setup 若失敗（config 載入不了、LED 初始化不了）就設為 true：韌體改為進入
+// 救援模式而不是死迴圈 —— serial 指令仍然可用，才有辦法從 Studio 診斷與重設。
+static bool g_boot_failed = false;
 
 static const char *resetReasonName(esp_reset_reason_t reason) {
   switch (reason) {
@@ -141,26 +144,31 @@ void setup() {
 
   g_state = STATE_BOOT;
 
+  // Serial protocol 必須最先啟動。之前 config / LED 初始化失敗時是
+  // `while (true) delay(1000)`，那會讓板子完全不回應任何指令，Studio 端只看得到
+  // "Serial command timeout"，完全無從診斷，也沒辦法重寫設定把板子救回來。
+  g_serial.begin();
+
   if (!g_config_loader.load(g_config)) {
-    Serial.println("[app] config load failed");
-    while (true) delay(1000);
+    Serial.println("[app] config load failed — 進入救援模式（serial 指令仍可用）");
+    g_boot_failed = true;
   }
 
-  g_timeline.setConfig(&g_config);
+  if (!g_boot_failed) {
+    g_timeline.setConfig(&g_config);
 
-  if (!g_leds.init(g_config.hardware)) {
-    Serial.println("[app] LED init failed");
-    while (true) delay(1000);
+    if (!g_leds.init(g_config.hardware)) {
+      Serial.println("[app] LED init failed — 進入救援模式（serial 指令仍可用）");
+      g_boot_failed = true;
+    }
   }
 
 #ifndef LED_DISABLE_BOOT_SELFTEST
   // Wiring check: flash the strip on power-up to confirm the data line (GPIO)
   // is connected and the chipset/color order is correct. Disable with
   // -DLED_DISABLE_BOOT_SELFTEST once wiring is verified.
-  g_leds.selfTest(3000);
+  if (!g_boot_failed) g_leds.selfTest(3000);
 #endif
-
-  g_serial.begin();
 
   g_state = STATE_WIFI_CONNECTING;
   if (!g_wifi.connect(g_config.network)) {
@@ -180,7 +188,7 @@ static void applySerialPendingAction(const SerialPendingAction &action) {
   g_timeline.setConfig(&g_config);
   // Brightness does not require rebuilding FastLED controllers, so apply it
   // immediately whenever a new Config is accepted over Serial.
-  g_leds.setMaxBrightness(g_config.hardware.max_brightness);
+  if (!g_boot_failed) g_leds.setMaxBrightness(g_config.hardware.max_brightness);
 
   if (action.network_changed) {
     // Must NOT block here — Studio often uploads config right after setWifi.
@@ -252,7 +260,8 @@ void loop() {
     g_timecode_blackout = false;
   }
 
-  if (now_us - last_frame_us >= FRAME_INTERVAL_US) {
+  // 救援模式下 LED driver 沒初始化成功，任何 render 都不能碰
+  if (!g_boot_failed && now_us - last_frame_us >= FRAME_INTERVAL_US) {
     last_frame_us = now_us;
 
     if (g_state == STATE_PLAYING && g_clock.isPlaying() && !g_timecode_blackout) {
