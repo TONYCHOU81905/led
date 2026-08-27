@@ -151,6 +151,13 @@ export async function startMonitor(path: string, onLine: (l: SerialMonitorLine) 
 }
 
 /** 停止監看。已經停了就直接 return。 */
+/**
+ * macOS 上 close() 的 callback 回來之後，核心還要一小段時間才真正釋放
+ * file descriptor（USB CDC 尤其明顯）。沒有這段等待就立刻重開同一個 port，
+ * 會拿到 "Resource temporarily unavailable / Cannot lock port"。
+ */
+const PORT_RELEASE_SETTLE_MS = 250
+
 export async function stopMonitor(): Promise<void> {
   if (!currentSession) return
   const session = currentSession
@@ -158,6 +165,7 @@ export async function stopMonitor(): Promise<void> {
   await new Promise<void>((resolve) => {
     session.port.close(() => resolve())
   })
+  await new Promise((resolve) => setTimeout(resolve, PORT_RELEASE_SETTLE_MS))
 }
 
 export function isMonitoring(): boolean {

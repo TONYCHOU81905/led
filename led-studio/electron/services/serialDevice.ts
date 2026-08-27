@@ -204,7 +204,8 @@ export async function waitForEspReady(path: string): Promise<void> {
   const detail = lastError ? `：${lastError.message}` : ''
   throw new Error(
     `板子沒有回應 ping（已重試 ${PING_RETRY_COUNT} 次、每次等 ${PING_TIMEOUT_MS}ms）${detail}。` +
-      '請確認 DebugView 的監看已關閉、選到的 port 正確，且板子韌體有啟用對應的 serial 通道。'
+      '常見原因：DebugView 的監看還開著、終端機另外開了 pio device monitor' +
+      `（可用 lsof 檢查誰佔著 port）、port 選錯，或板子韌體未啟用對應的 serial 通道。`
   )
 }
 
@@ -227,16 +228,37 @@ export async function uploadEspConfig(
   }
 
   const checksum = crc32(json)
+  const totalChunks = Math.ceil(json.length / CHUNK_SIZE)
+
+  // 四個階段共用同一個 "Serial command timeout" 會完全看不出卡在哪 ——
+  // ping 不通、begin 不回、傳到一半斷、還是最後套用失敗，排查方向完全不同。
+  const labelled = async <R>(stage: string, run: () => Promise<R>): Promise<R> => {
+    try {
+      return await run()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      throw new Error(`上傳 Config 失敗（${stage}）：${msg}`)
+    }
+  }
 
   return withOpenPort(path, async (_port, _parser, send) => {
-    await send({ cmd: 'begin_config', size: json.length, crc32: checksum })
+    await labelled(`begin_config，共 ${json.length} bytes / ${totalChunks} 個 chunk`, () =>
+      send({ cmd: 'begin_config', size: json.length, crc32: checksum })
+    )
 
+    let index = 0
     for (let offset = 0; offset < json.length; offset += CHUNK_SIZE) {
       const data = json.slice(offset, offset + CHUNK_SIZE)
-      await send({ cmd: 'config_chunk', offset, data })
+      index += 1
+      const at = index
+      await labelled(`傳送第 ${at}/${totalChunks} 個 chunk（offset ${offset}）`, () =>
+        send({ cmd: 'config_chunk', offset, data })
+      )
     }
 
-    return send<EspConfigUploadResult>({ cmd: 'end_config' })
+    return labelled('end_config（板子套用設定）', () =>
+      send<EspConfigUploadResult>({ cmd: 'end_config' })
+    )
   })
 }
 
