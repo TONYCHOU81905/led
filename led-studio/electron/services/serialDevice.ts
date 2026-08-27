@@ -198,7 +198,14 @@ export async function waitForEspReady(path: string): Promise<void> {
       await new Promise((r) => setTimeout(r, PING_RETRY_MS))
     }
   }
-  throw lastError ?? new Error('ESP not responding to ping')
+  // 直接 throw lastError 會變成含糊的 "Serial command timeout"，看起來像是
+  // 資料傳輸逾時，實際上是「重試 N 次 ping 都沒回應」—— 兩者的排查方向完全
+  // 不同（前者查傳輸量，後者查板子收不到指令），訊息必須講清楚。
+  const detail = lastError ? `：${lastError.message}` : ''
+  throw new Error(
+    `板子沒有回應 ping（已重試 ${PING_RETRY_COUNT} 次、每次等 ${PING_TIMEOUT_MS}ms）${detail}。` +
+      '請確認 DebugView 的監看已關閉、選到的 port 正確，且板子韌體有啟用對應的 serial 通道。'
+  )
 }
 
 export async function setEspWifi(path: string, ssid: string, password: string): Promise<{ ok: boolean }> {
