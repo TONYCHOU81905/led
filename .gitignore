@@ -19,3 +19,8 @@ led-studio/release/
 # 本地測試素材，不入庫（檔案仍留在工作目錄）
 music.mp3
 *.mp3
+
+# 本機環境變數（含 Wi-Fi 憑證等），一律不入庫
+.env
+.env.*
+!.env.example

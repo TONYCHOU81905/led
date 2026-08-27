@@ -1,4 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
+import {
+  WIFI_PRESET_STORAGE_KEY,
+  mergeWithEnvPreset,
+  parsePresets,
+  removePreset,
+  upsertPreset,
+  type WifiPreset
+} from '../shared/wifiPresets'
 import { Link } from 'react-router-dom'
 import { compileProjectRole, configChecksum } from '../shared/configCompiler'
 import {
@@ -40,6 +48,31 @@ export function DeviceManagerPage() {
   const [roleId, setRoleId] = useState(activeRoleId ?? '')
   const [ssid, setSsid] = useState('')
   const [password, setPassword] = useState('')
+
+  // Wi-Fi 快捷：本機儲存優先，再補上 .env.local 帶進來的預設值。
+  // 密碼只留在這台電腦，不進版控（見 src/shared/wifiPresets.ts）。
+  const [wifiPresets, setWifiPresets] = useState<WifiPreset[]>(() => {
+    let stored: WifiPreset[] = []
+    try {
+      stored = parsePresets(window.localStorage.getItem(WIFI_PRESET_STORAGE_KEY))
+    } catch {
+      stored = []
+    }
+    return mergeWithEnvPreset(
+      stored,
+      import.meta.env.VITE_DEFAULT_WIFI_SSID,
+      import.meta.env.VITE_DEFAULT_WIFI_PASSWORD
+    )
+  })
+
+  const persistPresets = (next: WifiPreset[]) => {
+    setWifiPresets(next)
+    try {
+      window.localStorage.setItem(WIFI_PRESET_STORAGE_KEY, JSON.stringify(next))
+    } catch {
+      // 隱私模式或儲存空間滿了 —— 快捷只是便利功能，失敗不該擋住主要流程
+    }
+  }
   const [ledType, setLedType] = useState<'WS2811' | 'WS2812B'>('WS2812B')
   const [maxBrightnessPercent, setMaxBrightnessPercent] = useState(25)
   const [loadedConfig, setLoadedConfig] = useState<DeviceConfig | null>(null)
@@ -263,8 +296,61 @@ export function DeviceManagerPage() {
 
         <label className="device-field">
           <span className="device-field-label">WiFi 密碼</span>
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="WiFi 密碼" />
+          <input
+            type="text"
+            autoComplete="off"
+            spellCheck={false}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="WiFi 密碼"
+          />
         </label>
+
+        <div className="device-field" style={{ gridColumn: '1 / -1' }}>
+          <span className="device-field-label">Wi-Fi 快捷</span>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', alignItems: 'center' }}>
+            {wifiPresets.length === 0 && (
+              <span style={{ color: '#64748b', fontSize: '0.82em' }}>
+                還沒有快捷。填好上面的 SSID 與密碼後按「儲存目前」。
+              </span>
+            )}
+            {wifiPresets.map((preset) => (
+              <span key={preset.ssid} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  title={`套用 ${preset.ssid}`}
+                  onClick={() => {
+                    setSsid(preset.ssid)
+                    setPassword(preset.password)
+                  }}
+                >
+                  {preset.ssid}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  title={`刪除快捷 ${preset.ssid}`}
+                  onClick={() => persistPresets(removePreset(wifiPresets, preset.ssid))}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={!ssid.trim()}
+              title={ssid.trim() ? '把目前的 SSID 與密碼存成快捷' : '請先填入 SSID'}
+              onClick={() => persistPresets(upsertPreset(wifiPresets, { ssid: ssid.trim(), password }))}
+            >
+              儲存目前
+            </button>
+          </div>
+          <small style={{ color: '#64748b' }}>
+            快捷只存在這台電腦（瀏覽器儲存空間），不會進版控也不會被推上 GitHub。
+          </small>
+        </div>
 
         <label className="device-field">
           <span className="device-field-label">LED 燈條 IC</span>
