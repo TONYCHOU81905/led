@@ -101,8 +101,8 @@ let buildInProgress = false
 
 interface FlashArtifacts {
   firmwareBin: string
-  bootloaderBin?: string
-  partitionsBin?: string
+  bootloaderBin: string
+  partitionsBin: string
 }
 
 function resolveFlashArtifacts(pioEnv: string): FlashArtifacts {
@@ -114,11 +114,26 @@ function resolveFlashArtifacts(pioEnv: string): FlashArtifacts {
 
   const bootloaderBin = join(buildDir, 'bootloader.bin')
   const partitionsBin = join(buildDir, 'partitions.bin')
-  return {
-    firmwareBin,
-    bootloaderBin: existsSync(bootloaderBin) ? bootloaderBin : undefined,
-    partitionsBin: existsSync(partitionsBin) ? partitionsBin : undefined
+
+  // 過去缺 bootloader / partitions 時是靜默降級成「只燒 firmware」，那在
+  // erase_flash 過的板子上必然燒出一塊開不了機的磚：ROM 會載入 0x0 的殘缺
+  // bootloader，載到第一個 segment 就失敗並觸發看門狗重置，log 看起來像
+  // 無窮 boot loop（只有一個 load: 而沒有後續 load: 與 entry:）。
+  // 這兩個檔案是 pio run 的標準產物，缺了就是不正常狀態，必須明確報錯。
+  const missing = [
+    existsSync(bootloaderBin) ? null : 'bootloader.bin',
+    existsSync(partitionsBin) ? null : 'partitions.bin'
+  ].filter((x): x is string => x !== null)
+
+  if (missing.length > 0) {
+    throw new Error(
+      `${pioEnv} 的建置產物不完整，缺少 ${missing.join('、')}。` +
+        '只燒 firmware 會讓板子無法開機（bootloader 與分區表不完整）。' +
+        `請先重新建置：pio run -e ${pioEnv}`
+    )
   }
+
+  return { firmwareBin, bootloaderBin, partitionsBin }
 }
 
 function buildEsptoolArgs(
@@ -155,19 +170,16 @@ function buildEsptoolArgs(
     args.push('--no-compress')
   }
 
-  if (artifacts.bootloaderBin && artifacts.partitionsBin) {
-    // Bootloader offset differs per chip: ESP32-S3 = 0x0, classic ESP32 = 0x1000
-    args.push(
-      `0x${board.bootloaderOffset.toString(16)}`,
-      artifacts.bootloaderBin,
-      '0x8000',
-      artifacts.partitionsBin,
-      `0x${board.flashOffset.toString(16)}`,
-      artifacts.firmwareBin
-    )
-  } else {
-    args.push(`0x${board.flashOffset.toString(16)}`, artifacts.firmwareBin)
-  }
+  // 三個映像一律一起燒（resolveFlashArtifacts 已保證都存在）。
+  // Bootloader offset 依晶片而異：ESP32-S3 = 0x0、classic ESP32 = 0x1000
+  args.push(
+    `0x${board.bootloaderOffset.toString(16)}`,
+    artifacts.bootloaderBin,
+    '0x8000',
+    artifacts.partitionsBin,
+    `0x${board.flashOffset.toString(16)}`,
+    artifacts.firmwareBin
+  )
 
   return args
 }
@@ -210,9 +222,7 @@ export async function flashFirmware(
   const { command, prefixArgs } = resolveEsptoolInvocation()
   const bauds = baudAttempts(board.uploadBaud)
 
-  const imageSummary = artifacts.bootloaderBin
-    ? 'bootloader + partitions + firmware'
-    : 'firmware only'
+  const imageSummary = 'bootloader + partitions + firmware'
   onProgress({
     stage: 'start',
     message: `Flashing ${board.label} (${imageSummary}, ${board.flashSize}) to ${port}`
