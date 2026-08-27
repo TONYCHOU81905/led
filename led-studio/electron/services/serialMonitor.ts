@@ -126,6 +126,17 @@ export async function startMonitor(path: string, onLine: (l: SerialMonitorLine) 
 
     port.open((openErr) => {
       if (openErr) {
+        // open 失敗也必須把 parser 與 port 的 listener/fd 清乾淨。
+        // 漏掉這段時，失敗的 port 物件會殘留在半開狀態，累積之後 app 自己
+        // 就會佔住 /dev/cu.*（lsof 可看到 Electron 掛著高編號的 FD），
+        // 於後續所有指令都拿到 Cannot lock port。
+        try {
+          parser.removeAllListeners()
+          port.removeAllListeners()
+          if (port.isOpen) port.close(() => {})
+        } catch {
+          // 已經是壞掉的 port，清理失敗就忽略
+        }
         // 原始訊息是 "Resource temporarily unavailable Cannot lock port"，
         // 看不出該怎麼處理。CDC 只有一條通道，最常見的原因就是 port 正被
         // 別的東西佔著（Studio 正在燒錄或傳 config、外部的 pio device

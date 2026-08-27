@@ -38,6 +38,8 @@ const PING_RETRY_COUNT = 12
  * 用 60 秒的話，第一次 ping 就要等滿一分鐘才算失敗，使用者看起來像當掉。
  */
 const PING_TIMEOUT_MS = 2500
+/** port.close() 沒回 callback 時的逾時保險，避免 Promise 永遠不 settle */
+const PORT_CLOSE_GUARD_MS = 1500
 
 type SerialPortModule = typeof import('serialport')
 type ReadlineParserModule = typeof import('@serialport/parser-readline')
@@ -153,12 +155,33 @@ async function withOpenPort<T>(
       if (pending) pending(data)
     }
 
+    let settled = false
     const cleanup = (err?: Error, result?: T) => {
+      if (settled) return
+      settled = true
       parser.off('data', onData)
-      port.close(() => {
+      port.removeAllListeners('error')
+
+      // port.close() 的 callback 在 port 已進入錯誤狀態時可能永遠不會被呼叫，
+      // 那樣這個 Promise 就永遠不 settle，fd 也一直掛著 —— 累積起來 app 自己
+      // 就會佔住 port。加上逾時保險，無論如何都要 settle。
+      let done = false
+      const finish = () => {
+        if (done) return
+        done = true
         if (err) reject(err)
         else resolve(result as T)
-      })
+      }
+      const guard = setTimeout(finish, PORT_CLOSE_GUARD_MS)
+      try {
+        port.close(() => {
+          clearTimeout(guard)
+          finish()
+        })
+      } catch {
+        clearTimeout(guard)
+        finish()
+      }
     }
 
     port.open((openErr) => {
@@ -166,6 +189,11 @@ async function withOpenPort<T>(
         cleanup(openErr)
         return
       }
+      // 沒有 error handler 時，port 層級的錯誤（板子被拔除、CDC 斷線）會變成
+      // unhandled error event，而這個 Promise 永遠等不到結果。
+      port.on('error', (err: Error) => {
+        cleanup(err instanceof Error ? err : new Error(String(err)))
+      })
       parser.on('data', onData)
       void fn(port, parser, send)
         .then((result) => cleanup(undefined, result))
