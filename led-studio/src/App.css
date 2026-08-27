@@ -1746,3 +1746,100 @@ body {
   .output-form-grid { grid-template-columns: 1fr; }
   .output-editor-heading { align-items: flex-start; flex-direction: column; }
 }
+
+.debugview-page {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.debugview-hint {
+  color: #9aa3b2;
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+.debugview-error {
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  background: #2a1414;
+  border: 1px solid #6b2626;
+  color: #f0a3a3;
+  font-size: 0.88rem;
+}
+
+.debugview-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem;
+}
+
+.debugview-field {
+  display: grid;
+  gap: 0.35rem;
+  color: #aab2c0;
+  font-size: 0.88rem;
+}
+
+.debugview-field-label {
+  font-size: 0.8rem;
+}
+
+.debugview-start-btn {
+  background: #14532d;
+  border-color: #22863a;
+}
+
+.debugview-stop-btn {
+  background: #4a1414;
+  border-color: #7a2323;
+}
+
+.debugview-autoscroll {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: #aab2c0;
+}
+
+.debugview-status {
+  font-size: 0.85rem;
+  color: #9aa3b2;
+}
+
+.debugview-log {
+  padding: 0.85rem 1rem;
+  background: #0a0c10;
+  border: 1px solid #2a2f3a;
+  border-radius: 8px;
+  height: 480px;
+  overflow-y: auto;
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+}
+
+.debugview-line {
+  display: flex;
+  gap: 0.6rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.debugview-line-ts {
+  color: #6b7280;
+  flex-shrink: 0;
+}
+
+.debugview-line-line {
+  color: #d1d5db;
+}
+
+.debugview-line-info {
+  color: #8b95a5;
+}
+
+.debugview-line-error {
+  color: #f87171;
+}

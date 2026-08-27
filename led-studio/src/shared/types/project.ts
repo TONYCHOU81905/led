@@ -305,6 +305,9 @@ export interface LedStudioApi {
     flashFirmware(port: string, boardId: FlashBoardId, onProgress: (p: { stage: string; message: string }) => void): Promise<void>
     buildFirmware(boardId: FlashBoardId, onProgress: (p: { stage: string; message: string }) => void): Promise<void>
     canBuildFirmware(): Promise<{ ok: boolean; reason?: string; pioPath?: string; projectRoot?: string }>
+    monitorStart(path: string, onLine: (l: { kind: string; text: string; at: number }) => void): Promise<void>
+    monitorStop(): Promise<void>
+    monitorStatus(): Promise<{ monitoring: boolean; path: string | null }>
   }
 }
 

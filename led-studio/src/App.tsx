@@ -8,6 +8,7 @@ import { LedChainPage } from './routes/LedChainPage'
 import { TimelinePage } from './routes/TimelinePage'
 import { ShowControlPage } from './routes/ShowControlPage'
 import { CalibrationPage } from './routes/CalibrationPage'
+import { DebugViewPage } from './routes/DebugViewPage'
 import './App.css'
 
 /** file:// 打包版 Electron 必須用 HashRouter，否則 pathname 對不上 Routes */
@@ -30,6 +31,7 @@ function AppShell() {
         <NavLink to="/devices">Devices</NavLink>
         <NavLink to="/show">音樂控制</NavLink>
         <NavLink to="/calibration">測試 / 校正</NavLink>
+        <NavLink to="/debug">DebugView</NavLink>
       </nav>
       <div className="main-column">
         <GlobalProjectToolbar />
@@ -42,6 +44,7 @@ function AppShell() {
             <Route path="/devices" element={<DeviceManagerPage />} />
             <Route path="/show" element={<ShowControlPage />} />
             <Route path="/calibration" element={<CalibrationPage />} />
+            <Route path="/debug" element={<DebugViewPage />} />
           </Routes>
         </main>
       </div>

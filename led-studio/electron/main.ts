@@ -13,6 +13,15 @@ import {
   setEspWifi,
   uploadEspConfig
 } from './services/serialDevice'
+import {
+  isMonitoring,
+  monitoringPath,
+  pauseMonitor,
+  resumeMonitor,
+  startMonitor,
+  stopMonitor,
+  type SerialMonitorLine
+} from './services/serialMonitor'
 import { timecodeBridge } from './services/timecodeBridge'
 import { loadOrBuildWaveformCache } from './services/waveformCache'
 import { resolveAppResource } from './utils/paths'
@@ -59,6 +68,23 @@ async function pickProjectBundleDir(project: LedProject): Promise<string | null>
   })
   if (result.canceled || !result.filePath) return null
   return stripAccidentalExtension(result.filePath)
+}
+
+/**
+ * serial port 是獨佔的：DebugView 的 monitor 若持續開著 port，任何其他
+ * device:* 指令（setWifi/uploadConfig/flash...）都會因 port busy 而失敗。
+ * 這個 helper 在執行指令前先暫停 monitor，指令結束後（無論成功或失敗）
+ * 自動恢復，讓使用者不用自己記得手動停看。
+ */
+async function withMonitorPaused<T>(fn: () => Promise<T>): Promise<T> {
+  const pausedPath = await pauseMonitor()
+  try {
+    return await fn()
+  } finally {
+    if (pausedPath) {
+      await resumeMonitor(pausedPath)
+    }
+  }
 }
 
 const knownBridgeTargets = new Set<string>()
@@ -341,25 +367,31 @@ app.whenReady().then(() => {
 
   ipcMain.handle('device:listPorts', async () => listSerialPorts())
 
-  ipcMain.handle('device:ping', async (_event, port: string) => pingEsp(port))
+  ipcMain.handle('device:ping', async (_event, port: string) =>
+    withMonitorPaused(() => pingEsp(port))
+  )
 
   ipcMain.handle('device:setWifi', async (_event, port: string, ssid: string, password: string) =>
-    setEspWifi(port, ssid, password)
+    withMonitorPaused(() => setEspWifi(port, ssid, password))
   )
 
   ipcMain.handle('device:uploadConfig', async (_event, port: string, config: Record<string, unknown>) =>
-    uploadEspConfig(port, config)
+    withMonitorPaused(() => uploadEspConfig(port, config))
   )
 
-  ipcMain.handle('device:reloadConfig', async (_event, port: string) => reloadEspConfig(port))
+  ipcMain.handle('device:reloadConfig', async (_event, port: string) =>
+    withMonitorPaused(() => reloadEspConfig(port))
+  )
 
-  ipcMain.handle('device:getStatus', async (_event, port: string) => {
-    const status = await getEspStatus(port)
-    const wifiIp = typeof status.wifi_ip === 'string' ? status.wifi_ip : undefined
-    registerBridgeTarget(wifiIp)
-    syncDiscoveryTargets()
-    return status
-  })
+  ipcMain.handle('device:getStatus', async (_event, port: string) =>
+    withMonitorPaused(async () => {
+      const status = await getEspStatus(port)
+      const wifiIp = typeof status.wifi_ip === 'string' ? status.wifi_ip : undefined
+      registerBridgeTarget(wifiIp)
+      syncDiscoveryTargets()
+      return status
+    })
+  )
 
   ipcMain.handle(
     'project:loadWaveformCache',
@@ -372,11 +404,14 @@ app.whenReady().then(() => {
   )
 
   ipcMain.handle('device:flashFirmware', async (event, port: string, boardId?: FlashBoardId) => {
-    await flashFirmware(port, boardId, (progress) => {
-      event.sender.send('device:flashProgress', progress)
-    })
+    await withMonitorPaused(() =>
+      flashFirmware(port, boardId, (progress) => {
+        event.sender.send('device:flashProgress', progress)
+      })
+    )
   })
 
+  // buildFirmware 只是跑 pio build，不會碰 serial port，不需要暫停 monitor。
   ipcMain.handle('device:buildFirmware', async (event, boardId?: FlashBoardId) => {
     await buildFirmware(boardId, (progress) => {
       event.sender.send('device:buildProgress', progress)
@@ -386,6 +421,21 @@ app.whenReady().then(() => {
   ipcMain.handle('device:canBuildFirmware', async () => {
     return checkFirmwareBuildAvailability()
   })
+
+  ipcMain.handle('device:monitorStart', async (event, port: string) => {
+    await startMonitor(port, (line: SerialMonitorLine) => {
+      event.sender.send('device:monitorLine', line)
+    })
+  })
+
+  ipcMain.handle('device:monitorStop', async () => {
+    await stopMonitor()
+  })
+
+  ipcMain.handle('device:monitorStatus', async () => ({
+    monitoring: isMonitoring(),
+    path: monitoringPath()
+  }))
 
   createWindow()
 
@@ -400,7 +450,12 @@ app.on('window-all-closed', () => {
   ltcSidecar.stop()
   timecodeBridge.stop()
   espStatusListener.stop()
+  void stopMonitor()
   if (process.platform !== 'darwin') {
     app.quit()
   }
+})
+
+app.on('before-quit', () => {
+  void stopMonitor()
 })

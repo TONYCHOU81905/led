@@ -117,7 +117,10 @@ export function createMockApi(): MockApi {
       buildFirmware: vi.fn(async (_boardId, onProgress) => {
         onProgress({ stage: 'done', message: 'mock build ok' })
       }),
-      canBuildFirmware: vi.fn(async () => ({ ok: true }))
+      canBuildFirmware: vi.fn(async () => ({ ok: true })),
+      monitorStart: vi.fn(async () => undefined),
+      monitorStop: vi.fn(async () => undefined),
+      monitorStatus: vi.fn(async () => ({ monitoring: false, path: null }))
     }
   }
 
