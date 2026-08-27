@@ -4,6 +4,15 @@ import type { LedOutputDefinition, PartDefinition } from './types/project'
 export const CHAIN_WIRING_ORDER_HINT =
   '帽子 → 右手 → 右腳 → 左腳 → 左手（舞者本人視角）'
 
+/** ESP32-S3 上可安全用來驅動 WS2812B 的 GPIO（避開 strapping / flash / USB 腳位） */
+export const SAFE_GPIO_OPTIONS = [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 21]
+
+/** 挑一個還沒被任何通道用掉的 GPIO；全部用完時回傳 -1，交由 UI 顯示重複警告 */
+export function nextFreeGpio(outputs: LedOutputDefinition[]): number {
+  const used = new Set(outputs.map((o) => o.gpio))
+  return SAFE_GPIO_OPTIONS.find((gpio) => !used.has(gpio)) ?? -1
+}
+
 export const DEFAULT_LED_OUTPUTS: LedOutputDefinition[] = [
   {
     id: 'hat', display_name: '帽子', part_id: 'head', gpio: 4, layout: 'ring',

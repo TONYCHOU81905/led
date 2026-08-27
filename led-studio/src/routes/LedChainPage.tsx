@@ -2,15 +2,21 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   CHAIN_WIRING_ORDER_HINT,
+  SAFE_GPIO_OPTIONS,
   logicalLedCountForOutput,
   physicalLedCountForOutput
 } from '../shared/ledChainDefaults'
-import { resetPartsToDefault, updateLedOutput } from '../shared/projectMutations'
+import {
+  addLedOutput,
+  countEventsForOutput,
+  removeLedOutput,
+  resetPartsToDefault,
+  updateLedOutput
+} from '../shared/projectMutations'
 import type { LedOutputDefinition } from '../shared/types/project'
 import { useProjectStore } from '../stores/projectStore'
 
 const BRANCH_LABELS = ['拇指／大趾', '食指／第二趾', '中指／第三趾', '無名指／第四趾', '小拇指／小趾']
-const SAFE_GPIO_OPTIONS = [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 21]
 
 function clampInteger(raw: string, min: number, max: number): number {
   return Math.min(max, Math.max(min, Math.floor(Number(raw) || 0)))
@@ -36,6 +42,7 @@ function OutputTopology({ output }: { output: LedOutputDefinition }) {
 export function LedChainPage() {
   const { project, activeRoleId, setActiveRole, updateProject } = useProjectStore()
   const [activeOutputId, setActiveOutputId] = useState('hat')
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
 
   const role = useMemo(
     () => project?.roles.find((r) => r.role_id === activeRoleId) ?? project?.roles[0] ?? null,
@@ -69,7 +76,7 @@ export function LedChainPage() {
       <header className="page-header led-chain-header">
         <div>
           <h1>LED 輸出與並聯配置</h1>
-          <p className="hint">5 個獨立 GPIO · {CHAIN_WIRING_ORDER_HINT}</p>
+          <p className="hint">{outputs.length} 個獨立 GPIO · {CHAIN_WIRING_ORDER_HINT}</p>
         </div>
         <div className="role-tabs" aria-label="舞者選擇">
           {project.roles.map((item) => (
@@ -98,6 +105,20 @@ export function LedChainPage() {
             <span>通道 {index + 1}</span><strong>{output.display_name}</strong><small>GPIO {output.gpio}</small>
           </button>
         ))}
+        {role && (
+          <button
+            type="button"
+            className="output-tab"
+            title="複製目前選取的通道設定，新增一個通道"
+            onClick={() => {
+              const sourceId = activeOutput?.id
+              updateProject((current) => addLedOutput(current, role.role_id, sourceId))
+              setPendingDeleteId(null)
+            }}
+          >
+            <span>＋</span><strong>新增通道</strong><small>沿用目前設定</small>
+          </button>
+        )}
       </div>
 
       {activeOutput && role && (
@@ -107,8 +128,37 @@ export function LedChainPage() {
             <div className="output-counts">
               <span>邏輯 {logicalLedCountForOutput(activeOutput)} 顆</span>
               <span>實體 {physicalLedCountForOutput(activeOutput)} 顆</span>
+              <button
+                type="button"
+                className="btn btn-danger-sm"
+                disabled={outputs.length <= 1}
+                title={outputs.length <= 1 ? '至少要保留一個通道' : '刪除這個通道'}
+                onClick={() => setPendingDeleteId(activeOutput.id)}
+              >
+                刪除通道
+              </button>
             </div>
           </div>
+
+          {pendingDeleteId === activeOutput.id && (
+            <div className="error-banner" style={{ display: 'flex', alignItems: 'center', gap: '0.75em', flexWrap: 'wrap' }}>
+              <span>
+                「{activeOutput.display_name}」這個通道上有 {countEventsForOutput(role, activeOutput.id)} 個 clip，
+                刪除通道會一併移除它們。後面通道的 LED 索引也會往前重算。
+              </span>
+              <button type="button" className="btn btn-sm" onClick={() => setPendingDeleteId(null)}>取消</button>
+              <button
+                type="button"
+                className="btn btn-danger-sm"
+                onClick={() => {
+                  updateProject((current) => removeLedOutput(current, role.role_id, activeOutput.id))
+                  setPendingDeleteId(null)
+                }}
+              >
+                確定刪除
+              </button>
+            </div>
+          )}
 
           <OutputTopology output={activeOutput} />
 

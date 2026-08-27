@@ -1,13 +1,16 @@
 import type {
+  LedOutputDefinition,
   LedProject,
   PartDefinition,
   RoleDefinition,
   TimelineEventUI
 } from './types/project'
 import {
+  DEFAULT_LED_OUTPUTS,
   cloneDefaultChainParts,
   cloneDefaultLedOutputs,
   createPartAfterExisting,
+  nextFreeGpio,
   partsFromLedOutputs
 } from './ledChainDefaults'
 import { STAGE_COLORS } from './stageColors'
@@ -174,6 +177,74 @@ export function updateLedOutput(
       const current = role.led_outputs ?? cloneDefaultLedOutputs()
       const outputs = current.map((output) => output.id === outputId ? { ...output, ...patch } : output)
       return { ...role, led_outputs: outputs, parts: partsFromLedOutputs(outputs) }
+    })
+  })
+}
+
+/** 這個通道對應的部位上有幾個 clip —— 刪除前要告訴使用者會連帶刪掉多少 */
+export function countEventsForOutput(role: RoleDefinition, outputId: string): number {
+  const output = (role.led_outputs ?? []).find((o) => o.id === outputId)
+  if (!output) return 0
+  return role.events.filter((e) => e.targets.includes(output.part_id)).length
+}
+
+/**
+ * 新增一個 LED 通道。預設沿用 sourceOutputId 那一個的所有接線設定，
+ * 只換掉 id / part_id / 名稱 / GPIO —— 加第六、第七支肢體時最省事。
+ */
+export function addLedOutput(
+  project: LedProject,
+  roleId: string,
+  sourceOutputId?: string
+): LedProject {
+  return touchProject({
+    ...project,
+    roles: project.roles.map((role) => {
+      if (role.role_id !== roleId) return role
+      const current = role.led_outputs ?? cloneDefaultLedOutputs()
+      const source =
+        current.find((o) => o.id === sourceOutputId) ?? current[current.length - 1]
+      const seq = current.length + 1
+      const suffix = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`
+      const next: LedOutputDefinition = {
+        ...(source ?? DEFAULT_LED_OUTPUTS[0]),
+        id: `out_${suffix}`,
+        part_id: `part_${suffix}`,
+        display_name: `通道 ${seq}`,
+        gpio: nextFreeGpio(current)
+      }
+      const outputs = [...current, next]
+      return { ...role, led_outputs: outputs, parts: partsFromLedOutputs(outputs) }
+    })
+  })
+}
+
+/**
+ * 刪除一個 LED 通道，並一併移除 Timeline 上指向該部位的 clip
+ * （parts 是從 led_outputs 衍生的，留著會變成指向不存在部位的壞資料）。
+ * 至少保留一個通道。
+ */
+export function removeLedOutput(
+  project: LedProject,
+  roleId: string,
+  outputId: string
+): LedProject {
+  return touchProject({
+    ...project,
+    roles: project.roles.map((role) => {
+      if (role.role_id !== roleId) return role
+      const current = role.led_outputs ?? cloneDefaultLedOutputs()
+      if (current.length <= 1) return role
+      const removed = current.find((o) => o.id === outputId)
+      if (!removed) return role
+
+      const outputs = current.filter((o) => o.id !== outputId)
+      // 舊格式的 event 可能掛多個部位：先抽掉這個部位，targets 變空才整個刪掉
+      const events = role.events
+        .map((e) => ({ ...e, targets: e.targets.filter((t) => t !== removed.part_id) }))
+        .filter((e) => e.targets.length > 0)
+
+      return { ...role, led_outputs: outputs, parts: partsFromLedOutputs(outputs), events }
     })
   })
 }
