@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { join, isAbsolute } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { readFile, writeFile, stat } from 'node:fs/promises'
-import { flashFirmware } from './services/flasher'
+import { buildFirmware, checkFirmwareBuildAvailability, flashFirmware } from './services/flasher'
 import { espStatusListener, type EspDeviceStatus } from './services/espStatusListener'
 import { ltcSidecar } from './services/ltcSidecar'
 import {
@@ -375,6 +375,16 @@ app.whenReady().then(() => {
     await flashFirmware(port, boardId, (progress) => {
       event.sender.send('device:flashProgress', progress)
     })
+  })
+
+  ipcMain.handle('device:buildFirmware', async (event, boardId?: FlashBoardId) => {
+    await buildFirmware(boardId, (progress) => {
+      event.sender.send('device:buildProgress', progress)
+    })
+  })
+
+  ipcMain.handle('device:canBuildFirmware', async () => {
+    return checkFirmwareBuildAvailability()
   })
 
   createWindow()

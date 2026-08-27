@@ -78,7 +78,22 @@ const api: LedStudioApi = {
       return ipcRenderer.invoke('device:flashFirmware', port, boardId).finally(() => {
         ipcRenderer.removeListener('device:flashProgress', handler)
       })
-    }
+    },
+    buildFirmware: (boardId: FlashBoardId, onProgress: (p: { stage: string; message: string }) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, progress: { stage: string; message: string }) =>
+        onProgress(progress)
+      ipcRenderer.on('device:buildProgress', handler)
+      return ipcRenderer.invoke('device:buildFirmware', boardId).finally(() => {
+        ipcRenderer.removeListener('device:buildProgress', handler)
+      })
+    },
+    canBuildFirmware: () =>
+      ipcRenderer.invoke('device:canBuildFirmware') as Promise<{
+        ok: boolean
+        reason?: string
+        pioPath?: string
+        projectRoot?: string
+      }>
   }
 }
 

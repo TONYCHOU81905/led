@@ -113,7 +113,11 @@ export function createMockApi(): MockApi {
       getStatus: vi.fn(async () => ({ ok: true, wifi: 'connected' })),
       flashFirmware: vi.fn(async (_port, _boardId, onProgress) => {
         onProgress({ stage: 'flash', message: 'mock flash ok' })
-      })
+      }),
+      buildFirmware: vi.fn(async (_boardId, onProgress) => {
+        onProgress({ stage: 'done', message: 'mock build ok' })
+      }),
+      canBuildFirmware: vi.fn(async () => ({ ok: true }))
     }
   }
 

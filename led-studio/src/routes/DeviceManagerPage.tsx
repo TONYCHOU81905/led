@@ -48,6 +48,8 @@ export function DeviceManagerPage() {
   const [log, setLog] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
   const [portError, setPortError] = useState<string | null>(null)
+  const [building, setBuilding] = useState(false)
+  const [buildAvailability, setBuildAvailability] = useState<{ ok: boolean; reason?: string } | null>(null)
 
   const effectivePort = selectedPort || manualPort.trim()
 
@@ -95,6 +97,17 @@ export function DeviceManagerPage() {
   useEffect(() => {
     if (activeRoleId) setRoleId(activeRoleId)
   }, [activeRoleId])
+
+  useEffect(() => {
+    if (!window.api?.device) {
+      setBuildAvailability({ ok: false, reason: '需要 Electron App' })
+      return
+    }
+    void window.api.device
+      .canBuildFirmware()
+      .then((res) => setBuildAvailability(res))
+      .catch((err) => setBuildAvailability({ ok: false, reason: err instanceof Error ? err.message : String(err) }))
+  }, [])
 
   if (!project) {
     return (
@@ -365,6 +378,30 @@ export function DeviceManagerPage() {
           }
         >
           燒錄韌體 (esptool)
+        </button>
+        <button
+          type="button"
+          className="btn btn-sm"
+          disabled={building || !buildAvailability?.ok}
+          title={buildAvailability?.ok ? undefined : buildAvailability?.reason}
+          onClick={async () => {
+            if (!window.api?.device) {
+              appendLog('編譯韌體: 需要 Electron App')
+              return
+            }
+            setBuilding(true)
+            appendLog('--- 編譯韌體 ---')
+            try {
+              await window.api.device.buildFirmware(flashBoardId, (p) => appendLog(p.message))
+              appendLog('編譯韌體: OK，可以按「燒錄韌體」燒入了')
+            } catch (err) {
+              appendLog(`編譯韌體: ${err instanceof Error ? err.message : String(err)}`)
+            } finally {
+              setBuilding(false)
+            }
+          }}
+        >
+          {building ? '編譯中…' : '編譯韌體'}
         </button>
         <button
           type="button"

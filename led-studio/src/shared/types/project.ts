@@ -303,6 +303,8 @@ export interface LedStudioApi {
     reloadConfig(port: string): Promise<{ ok: boolean; crc32?: number; events?: number }>
     getStatus(port: string): Promise<Record<string, unknown>>
     flashFirmware(port: string, boardId: FlashBoardId, onProgress: (p: { stage: string; message: string }) => void): Promise<void>
+    buildFirmware(boardId: FlashBoardId, onProgress: (p: { stage: string; message: string }) => void): Promise<void>
+    canBuildFirmware(): Promise<{ ok: boolean; reason?: string; pioPath?: string; projectRoot?: string }>
   }
 }
 
