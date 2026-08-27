@@ -11,6 +11,13 @@
 #   scripts/fw.sh upload [env]     # 建置並上傳到板子
 #   scripts/fw.sh clean [env]
 #   scripts/fw.sh envs             # 列出 platformio.ini 裡所有 env
+#   scripts/fw.sh monitor          # 看板子的 serial 輸出（等同 app 的 DebugView）
+#   scripts/fw.sh monitor <port>   # 指定 port，例如 /dev/cu.usbmodem101
+#   scripts/fw.sh ports            # 列出目前可用的 serial port
+#
+# 注意：serial port 是獨佔的。monitor 開著時，Studio 的 DebugView、燒錄與
+# 上傳 config 都會搶不到 port（錯誤訊息是 Cannot lock port）。要用 app 操作
+# 前先把 monitor 關掉（Ctrl+C，若無效試 Ctrl+]）。
 set -euo pipefail
 
 DEFAULT_ENV="esp32-s3-devkitc-1-n16r8"
@@ -38,7 +45,9 @@ find_pio() {
 
 PIO="$(find_pio)"
 ACTION="${1:-build}"
+# monitor 的第二個參數是 port 而不是 env
 PIO_ENV="${2:-$DEFAULT_ENV}"
+PORT="${2:-}"
 
 cd "$REPO_ROOT"
 
@@ -52,11 +61,21 @@ case "$ACTION" in
   clean)
     exec "$PIO" run -e "$PIO_ENV" -t clean
     ;;
+  monitor)
+    # baud 取自 platformio.ini 的 monitor_speed（115200），不需另外指定
+    if [[ -n "$PORT" ]]; then
+      exec "$PIO" device monitor -p "$PORT"
+    fi
+    exec "$PIO" device monitor
+    ;;
+  ports)
+    exec "$PIO" device list
+    ;;
   envs)
     grep -oE '^\[env:[^]]+\]' platformio.ini | sed 's/^\[env://; s/\]$//'
     ;;
   *)
-    echo "未知動作：$ACTION（可用：build / upload / clean / envs）" >&2
+    echo "未知動作：$ACTION（可用：build / upload / clean / envs / monitor / ports）" >&2
     exit 1
     ;;
 esac
