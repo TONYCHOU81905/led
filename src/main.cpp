@@ -205,12 +205,25 @@ void loop() {
   const int64_t now_us = esp_timer_get_time();
   const uint32_t now_ms = static_cast<uint32_t>(now_us / 1000);
 
-  g_sync_rx.poll(g_clock, g_state);
+  const bool wifi_connected = g_wifi.isConnected();
+
+  // UDP socket 只有在 WiFi 連上、startNetworkServices() 跑過之後才有效。
+  // 未連線時照樣呼叫 parsePacket / endPacket，會每個 frame 噴一次
+  //   [E][WiFiUdp.cpp:221] parsePacket(): could not receive data: 9
+  // 把 serial log 完全洗掉，也讓 Studio 端更難讀到指令回應。
+  if (wifi_connected) {
+    g_sync_rx.poll(g_clock, g_state);
+  }
+
+  // serial 一定要無條件執行 —— 沒有它就沒辦法從 Studio 寫入 WiFi 憑證，
+  // 板子會永遠困在「連不上 WiFi 又無法被設定」的狀態。
   g_serial.poll(g_config_loader, g_config, g_clock, g_sync_rx, g_state);
   applySerialPendingAction(g_serial.takePendingAction());
-  g_status.tick(now_ms, g_config, g_state, g_clock, g_sync_rx);
 
-  const bool wifi_connected = g_wifi.isConnected();
+  if (wifi_connected) {
+    g_status.tick(now_ms, g_config, g_state, g_clock, g_sync_rx);
+  }
+
   if (!wifi_connected) {
     if (g_wifi_was_connected) {
       g_wifi_was_connected = false;
