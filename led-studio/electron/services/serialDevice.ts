@@ -27,7 +27,18 @@ type JsonPayload = Record<string, unknown>
 const COMMAND_TIMEOUT_MS = 60000
 // ESP32 JSON command buffer is limited; large configs must use chunked upload.
 const SINGLE_CONFIG_LIMIT = 0
-const CHUNK_SIZE = 240
+/**
+ * config_chunk 的 data 片段大小。
+ *
+ * 每個片段會被塞進 JSON 的字串欄位，裡面大量的 " 都要轉義成 \"，長度大約
+ * 膨脹 1.35 倍：240 bytes 的片段會變成 324 bytes 的指令行。ESP32-S3 的
+ * USB CDC 接收緩衝預設只有 256 bytes，超過就靜默丟棄整行，板子不會回應也
+ * 不會報錯 —— config 因此永遠傳不完。
+ *
+ * 實測臨界點（USB CDC）：指令 228 bytes 可過、278 bytes 失敗。
+ * 128 對應約 190 bytes，即使韌體端沒有加大緩衝也安全。
+ */
+const CHUNK_SIZE = 128
 const SETTLE_AFTER_WIFI_MS = 500
 const PING_RETRY_MS = 1500
 const PING_RETRY_COUNT = 12

@@ -131,6 +131,13 @@ static void renderStateIndicator(uint32_t now_ms) {
 }
 
 void setup() {
+  // USB CDC 的預設接收緩衝只有 256 bytes，超過就被靜默丟棄（連 JSON parse
+  // error 都不會印）。Studio 的 config_chunk 指令約 324 bytes，於是整行永遠
+  // 收不完整，chunk 從來沒有一次成功 —— 表現為「上傳 Config 卡住不動」，
+  // 板子只能一直跑內建預設值，LED 因此完全不亮。
+  // 實測臨界點：228 bytes 可過、278 bytes 失敗。
+  // 必須在 begin() 之前設定才有效。
+  Serial.setRxBufferSize(4096);
   Serial.begin(115200);
   delay(500);
   Serial.println();
