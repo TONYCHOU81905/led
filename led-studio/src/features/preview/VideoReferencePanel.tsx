@@ -39,6 +39,9 @@ export function VideoReferencePanel({
   const [videoUrl, setVideoUrl] = useState<string | null>(null)
   const [videoDurationMs, setVideoDurationMs] = useState(0)
   const [outOfRange, setOutOfRange] = useState(false)
+  // 解碼診斷：videoWidth 為 0 代表容器解析成功但視訊軌沒解出來（多半是 codec 不支援）
+  const [decodeInfo, setDecodeInfo] = useState<{ w: number; h: number } | null>(null)
+  const [mediaError, setMediaError] = useState<string | null>(null)
   const [offsetInput, setOffsetInput] = useState(String(offsetMs))
   // 程式主動 seek 前設為 true；seeked handler 看到 true 時只清旗標、不回報，
   // 避免「音樂 → 影片 seek → seeked 事件 → 又回頭改音樂」的無限迴圈。
@@ -170,9 +173,39 @@ export function VideoReferencePanel({
             ref={videoRef}
             src={videoUrl}
             playsInline
+            controls
             muted={videoMuted}
             className="video-ref-player"
+            onLoadedMetadata={(e) => {
+              const v = e.currentTarget
+              setDecodeInfo({ w: v.videoWidth, h: v.videoHeight })
+              setMediaError(null)
+            }}
+            onError={(e) => {
+              const err = e.currentTarget.error
+              const codes: Record<number, string> = {
+                1: '載入被中止',
+                2: '網路錯誤',
+                3: '解碼失敗（codec 不支援）',
+                4: '來源格式不支援'
+              }
+              setMediaError(err ? (codes[err.code] ?? `錯誤代碼 ${err.code}`) : '未知錯誤')
+            }}
           />
+          {mediaError && (
+            <div className="video-ref-warn">影片載入失敗：{mediaError}</div>
+          )}
+          {!mediaError && decodeInfo && decodeInfo.w === 0 && (
+            <div className="video-ref-warn">
+              視訊軌無法解碼（解析度讀到 0×0）—— 容器讀得到時間但畫面出不來，
+              通常是 HEVC / H.265 之類 Chromium 不支援的編碼。
+              可用 ffmpeg 轉成 H.264 後再匯入：
+              <code>ffmpeg -i 原檔.mov -c:v libx264 -crf 20 -c:a aac 參考影片.mp4</code>
+            </div>
+          )}
+          {decodeInfo && decodeInfo.w > 0 && (
+            <div className="video-ref-meta">影片解析度 {decodeInfo.w}×{decodeInfo.h}</div>
+          )}
           <div className="video-ref-controls">
             <button
               type="button"
