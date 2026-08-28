@@ -30,3 +30,6 @@ music.mp3
 # extensions.json / settings.json / tasks.json 不含絕對路徑，保留在版控中。
 .vscode/c_cpp_properties.json
 .vscode/launch.json
+
+# Claude Code 的本機工作目錄（含 worktree 副本，可達 GB 級），不入庫
+.claude/
