@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, net, protocol } from 'electron'
 import { join, isAbsolute } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { readFile, writeFile, stat } from 'node:fs/promises'
@@ -161,7 +161,43 @@ function createWindow(): void {
   }
 }
 
+/**
+ * 自訂 protocol：給 <video> 讀本機影片用。
+ *
+ * dev 模式下 renderer 跑在 http://localhost:5173，從 http 頁面載入 file:// 資源
+ * 會被 Chromium 的安全策略擋掉，<video> 只會拿到 MEDIA_ERR_SRC_NOT_SUPPORTED
+ * （即使 codec 完全支援）。音檔沒踩到是因為它走的是 readMusicFile → Blob →
+ * blob: URL 那條路；但影片動輒數百 MB 到 GB，整個讀進記憶體不可行，而且
+ * blob 也不利於 seek。
+ *
+ * 用 net.fetch 轉發到 file://，Electron 會處理 range request，<video> 才能
+ * 邊播邊 seek 而不是整個載完。
+ *
+ * registerSchemesAsPrivileged 必須在 app ready 之前呼叫。
+ */
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'app-media',
+    privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: true }
+  }
+])
+
 app.whenReady().then(() => {
+  protocol.handle('app-media', (request) => {
+    try {
+      // app-media://local/<URL 編碼後的絕對路徑>
+      const url = new URL(request.url)
+      const encoded = url.pathname.replace(/^\//, '')
+      const filePath = decodeURIComponent(encoded)
+      if (!isAbsolute(filePath)) {
+        return new Response('bad path', { status: 400 })
+      }
+      return net.fetch(pathToFileURL(filePath).toString(), { bypassCustomProtocolHandlers: true })
+    } catch (err) {
+      return new Response(String(err), { status: 500 })
+    }
+  })
+
   // Drop invalid targets left from earlier sessions (e.g. wifi_ip 0.0.0.0 via serial).
   for (const ip of [...knownBridgeTargets]) {
     if (!isUsableBridgeTargetIp(ip)) knownBridgeTargets.delete(ip)
@@ -289,10 +325,9 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('project:getVideoFileUrl', async (_event, filePath: string): Promise<string> => {
-    const resolved = isAbsolute(filePath)
-      ? filePath
-      : resolveAppResource(filePath)
-    return pathToFileURL(resolved).href
+    const resolved = isAbsolute(filePath) ? filePath : resolveAppResource(filePath)
+    // 不能回 file://（dev 模式的 http renderer 會被安全策略擋），改走自訂 protocol
+    return `app-media://local/${encodeURIComponent(resolved)}`
   })
 
   ipcMain.handle(
