@@ -37,7 +37,11 @@ const api: LedStudioApi = {
     readMusicFile: (filePath: string) =>
       ipcRenderer.invoke('project:readMusicFile', filePath) as Promise<{ data: Uint8Array<ArrayBuffer>; mime: string }>,
     loadWaveformCache: (musicFilePath: string, projectFilePath?: string) =>
-      ipcRenderer.invoke('project:loadWaveformCache', musicFilePath, projectFilePath)
+      ipcRenderer.invoke('project:loadWaveformCache', musicFilePath, projectFilePath),
+    pickVideoFile: () =>
+      ipcRenderer.invoke('project:pickVideoFile') as Promise<{ path: string } | null>,
+    getVideoFileUrl: (filePath: string) =>
+      ipcRenderer.invoke('project:getVideoFileUrl', filePath) as Promise<string>
   },
   show: {
     bridgeStart: (options?: BridgeOptions) => ipcRenderer.invoke('show:bridgeStart', options),

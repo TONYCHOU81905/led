@@ -65,7 +65,9 @@ export function createMockApi(): MockApi {
       data: new Uint8Array([0]),
       mime: 'audio/mpeg'
     })),
-    loadWaveformCache: vi.fn(async () => null)
+    loadWaveformCache: vi.fn(async () => null),
+    pickVideoFile: vi.fn(async () => ({ path: '/tmp/test-video.mp4' })),
+    getVideoFileUrl: vi.fn(async (filePath: string) => `blob:mock/${filePath}`)
     },
     show: {
       bridgeStart: vi.fn(async () => {

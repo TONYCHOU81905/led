@@ -8,6 +8,7 @@ import { defaultCompileOptions, deviceConfigFilename } from '../../shared/device
 import { loadMusicFromPath } from './audioAnalysis'
 import { CopyTimelineControl } from './CopyTimelineControl'
 import { DancerPreviewPanel } from '../preview/DancerPreviewPanel'
+import { VideoReferencePanel } from '../preview/VideoReferencePanel'
 import { EventInspector } from './EventInspector'
 import { TimelineCanvas } from './TimelineCanvas'
 import { applyDurationToSelection, buildSelectionPatch } from './batchPatch'
@@ -57,6 +58,8 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
   const [configNotice, setConfigNotice] = useState<string | null>(null)
   const [configError, setConfigError] = useState<string | null>(null)
   const [previewOpen, setPreviewOpen] = useState(false)
+  const [videoPanelOpen, setVideoPanelOpen] = useState(false)
+  const [musicPlaying, setMusicPlaying] = useState(false)
   const [copyNotice, setCopyNotice] = useState<string | null>(null)
   const [copyError, setCopyError] = useState<string | null>(null)
   const [ledSyncEnabled, setLedSyncEnabled] = useState(true)
@@ -271,11 +274,13 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
     const onPlay = () => {
       cancelAnimationFrame(playheadRafRef.current)
       playheadRafRef.current = requestAnimationFrame(tick)
+      setMusicPlaying(true)
       void bridgeOnPlay()
     }
     const onPause = () => {
       cancelAnimationFrame(playheadRafRef.current)
       syncPlayhead()
+      setMusicPlaying(false)
       bridgeOnPause()
     }
     const onSeeked = () => {
@@ -442,6 +447,34 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
     } catch (err) {
       setMusicError(err instanceof Error ? err.message : String(err))
     }
+  }
+
+  const importVideo = async () => {
+    if (!window.api?.project.pickVideoFile) return
+    const picked = await window.api.project.pickVideoFile()
+    if (!picked) return
+    onProjectChange({
+      ...project,
+      project: {
+        ...project.project,
+        video_file: picked.path,
+        updated_at: new Date().toISOString()
+      }
+    })
+  }
+
+  const setVideoOffsetMs = (offsetMs: number) => {
+    onProjectChange({
+      ...project,
+      project: { ...project.project, video_offset_ms: offsetMs, updated_at: new Date().toISOString() }
+    })
+  }
+
+  const setVideoMuted = (muted: boolean) => {
+    onProjectChange({
+      ...project,
+      project: { ...project.project, video_muted: muted, updated_at: new Date().toISOString() }
+    })
   }
 
   const seekAudio = (ms: number) => {
@@ -656,6 +689,15 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
           </button>
           <button
             type="button"
+            className={`btn btn-sm${videoPanelOpen ? ' btn-toggle-active' : ''}`}
+            onClick={() => setVideoPanelOpen((open) => !open)}
+            title={videoPanelOpen ? '隱藏參考影片' : '顯示參考影片'}
+            aria-pressed={videoPanelOpen}
+          >
+            參考影片
+          </button>
+          <button
+            type="button"
             className={`btn btn-sm${ledSyncEnabled ? ' btn-toggle-active' : ''}`}
             onClick={() => setLedSyncEnabled((on) => !on)}
             title={ledSyncEnabled ? '停止把 Timeline 播放送到 LED 裝置' : '播放/暫停/拉動時間同步控制 LED 裝置'}
@@ -757,6 +799,21 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
             playheadMs={playheadMs}
             activeRoleId={role.role_id}
             onClose={() => setPreviewOpen(false)}
+          />
+        )}
+
+        {videoPanelOpen && (
+          <VideoReferencePanel
+            musicMs={playheadMs}
+            musicPlaying={musicPlaying}
+            offsetMs={project.project.video_offset_ms ?? 0}
+            videoFile={project.project.video_file}
+            videoMuted={project.project.video_muted ?? true}
+            onOffsetChange={setVideoOffsetMs}
+            onSeekMusic={(ms) => setPlayhead(ms)}
+            onPickVideo={importVideo}
+            onMutedChange={setVideoMuted}
+            onClose={() => setVideoPanelOpen(false)}
           />
         )}
       </div>

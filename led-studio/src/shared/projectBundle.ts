@@ -1,17 +1,23 @@
 import type { LedProject } from './types/project'
 
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.wav', '.m4a', '.aac', '.flac', '.aiff', '.aif'])
+const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.m4v', '.webm', '.mkv', '.avi'])
 
 export function musicAssetFileName(sourcePath: string): string {
-  const ext = extractExt(sourcePath)
+  const ext = extractExt(sourcePath, AUDIO_EXTENSIONS, '.mp3')
   return `music${ext}`
 }
 
-function extractExt(filePath: string): string {
+export function videoAssetFileName(sourcePath: string): string {
+  const ext = extractExt(sourcePath, VIDEO_EXTENSIONS, '.mp4')
+  return `reference${ext}`
+}
+
+function extractExt(filePath: string, allowed: Set<string>, fallback: string): string {
   const dot = filePath.lastIndexOf('.')
-  if (dot === -1) return '.mp3'
+  if (dot === -1) return fallback
   const ext = filePath.slice(dot).toLowerCase()
-  return AUDIO_EXTENSIONS.has(ext) ? ext : '.mp3'
+  return allowed.has(ext) ? ext : fallback
 }
 
 export function projectDirFromFilePath(projectFilePath: string): string {
@@ -65,6 +71,56 @@ export function relativizeMusicPath(
 ): string | undefined {
   if (!musicPath?.trim()) return undefined
   const trimmed = musicPath.trim()
+  const projectDir = projectDirFromFilePath(projectFilePath)
+  const prefix = projectDir.endsWith('/') ? projectDir : `${projectDir}/`
+  if (trimmed.startsWith(prefix)) {
+    return trimmed.slice(prefix.length)
+  }
+  if (trimmed.startsWith(projectDir)) {
+    return trimmed.slice(projectDir.length).replace(/^\//, '')
+  }
+  return trimmed
+}
+
+/** Resolve video_file reference relative to the .ledproj.json directory. */
+export function resolveVideoFilePath(
+  projectFilePath: string,
+  videoRef: string | undefined,
+  resolveBundled?: (relativePath: string) => string
+): string | undefined {
+  if (!videoRef?.trim()) return undefined
+
+  const trimmed = videoRef.trim()
+  if (trimmed.startsWith('/') || /^[A-Za-z]:[/\\]/.test(trimmed)) return trimmed
+
+  const projectDir = projectDirFromFilePath(projectFilePath)
+  const sibling = joinProjectPath(projectDir, trimmed)
+  const candidates = [sibling]
+  if (resolveBundled) candidates.push(resolveBundled(trimmed))
+
+  return candidates[0]
+}
+
+export function hydrateProjectVideoPath(
+  project: LedProject,
+  projectFilePath: string,
+  resolveBundled?: (relativePath: string) => string
+): LedProject {
+  const resolved = resolveVideoFilePath(projectFilePath, project.project.video_file, resolveBundled)
+  if (!resolved || resolved === project.project.video_file) return project
+  return {
+    ...project,
+    project: { ...project.project, video_file: resolved }
+  }
+}
+
+/** Strip to portable relative video path for writing .ledproj.json */
+export function relativizeVideoPath(
+  projectFilePath: string,
+  videoPath: string | undefined
+): string | undefined {
+  if (!videoPath?.trim()) return undefined
+  const trimmed = videoPath.trim()
   const projectDir = projectDirFromFilePath(projectFilePath)
   const prefix = projectDir.endsWith('/') ? projectDir : `${projectDir}/`
   if (trimmed.startsWith(prefix)) {

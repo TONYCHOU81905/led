@@ -277,6 +277,24 @@ app.whenReady().then(() => {
     return pathToFileURL(resolved).href
   })
 
+  ipcMain.handle('project:pickVideoFile', async (): Promise<{ path: string } | null> => {
+    const result = await dialog.showOpenDialog({
+      filters: [
+        { name: 'Video', extensions: ['mp4', 'mov', 'm4v', 'webm', 'mkv', 'avi'] }
+      ],
+      properties: ['openFile']
+    })
+    if (result.canceled || !result.filePaths[0]) return null
+    return { path: result.filePaths[0] }
+  })
+
+  ipcMain.handle('project:getVideoFileUrl', async (_event, filePath: string): Promise<string> => {
+    const resolved = isAbsolute(filePath)
+      ? filePath
+      : resolveAppResource(filePath)
+    return pathToFileURL(resolved).href
+  })
+
   ipcMain.handle(
     'project:readMusicFile',
     async (_event, filePath: string): Promise<{ data: Uint8Array; mime: string }> => {

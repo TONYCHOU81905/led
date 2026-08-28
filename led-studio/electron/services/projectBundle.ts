@@ -1,14 +1,17 @@
-import { copyFile, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join, isAbsolute } from 'node:path'
 import type { LedProject } from '../../src/shared/types/project'
 import {
   hydrateProjectMusicPath,
+  hydrateProjectVideoPath,
   joinProjectPath,
   musicAssetFileName,
   projectDirFromFilePath,
   projectFilePathForDir,
-  relativizeMusicPath
+  relativizeMusicPath,
+  relativizeVideoPath,
+  videoAssetFileName
 } from '../../src/shared/projectBundle'
 import { resolveAppResource } from '../utils/paths'
 
@@ -34,17 +37,54 @@ export function resolveMusicPathForProject(
   ])
 }
 
+export function resolveVideoPathForProject(
+  projectFilePath: string,
+  videoRef: string | undefined
+): string | undefined {
+  if (!videoRef?.trim()) return undefined
+  const trimmed = videoRef.trim()
+  if (isAbsolute(trimmed)) return trimmed
+
+  const projectDir = projectDirFromFilePath(projectFilePath)
+  return pickExistingPath([
+    joinProjectPath(projectDir, trimmed),
+    resolveAppResource(trimmed)
+  ])
+}
+
 export function openProjectFromFile(projectFilePath: string, raw: string): LedProject {
   const project = JSON.parse(raw) as LedProject
   const musicRef = project.project.music_file
-  const resolved = musicRef ? resolveMusicPathForProject(projectFilePath, musicRef) : undefined
-  return hydrateProjectMusicPath(
-    resolved
-      ? { ...project, project: { ...project.project, music_file: resolved } }
-      : project,
+  const resolvedMusic = musicRef ? resolveMusicPathForProject(projectFilePath, musicRef) : undefined
+  const videoRef = project.project.video_file
+  const resolvedVideo = videoRef ? resolveVideoPathForProject(projectFilePath, videoRef) : undefined
+
+  const withResolvedPaths: LedProject = {
+    ...project,
+    project: {
+      ...project.project,
+      ...(resolvedMusic ? { music_file: resolvedMusic } : {}),
+      ...(resolvedVideo ? { video_file: resolvedVideo } : {})
+    }
+  }
+
+  return hydrateProjectVideoPath(
+    hydrateProjectMusicPath(withResolvedPaths, projectFilePath, (rel) => resolveAppResource(rel)),
     projectFilePath,
     (rel) => resolveAppResource(rel)
   )
+}
+
+/** 目的檔已存在且大小相同時視為已複製過，跳過複製（大檔案避免重複複製）。 */
+async function shouldSkipCopy(sourcePath: string, destPath: string): Promise<boolean> {
+  if (sourcePath === destPath) return true
+  if (!existsSync(destPath)) return false
+  try {
+    const [srcStat, destStat] = await Promise.all([stat(sourcePath), stat(destPath)])
+    return srcStat.size === destStat.size
+  } catch {
+    return false
+  }
 }
 
 export async function saveProjectToFile(
@@ -72,11 +112,30 @@ export async function saveProjectToFile(
     musicRef = relativizeMusicPath(projectFilePath, musicPath) ?? musicPath
   }
 
+  let videoPath = project.project.video_file
+  let videoRef = videoPath
+
+  if (videoPath && existsSync(videoPath)) {
+    const assetName = videoAssetFileName(videoPath)
+    const destPath = join(projectDir, assetName)
+    // 影片可能數百 MB 到數 GB：目的檔已存在且大小相同就跳過複製，避免每次存檔都重複複製大檔案。
+    const skipCopy = await shouldSkipCopy(videoPath, destPath)
+
+    if (!skipCopy) {
+      await copyFile(videoPath, destPath)
+    }
+    videoRef = assetName
+    videoPath = destPath
+  } else if (videoPath) {
+    videoRef = relativizeVideoPath(projectFilePath, videoPath) ?? videoPath
+  }
+
   const toWrite: LedProject = {
     ...project,
     project: {
       ...project.project,
       music_file: musicRef,
+      video_file: videoRef,
       updated_at: new Date().toISOString()
     }
   }
@@ -88,6 +147,7 @@ export async function saveProjectToFile(
     project: {
       ...project.project,
       music_file: musicPath,
+      video_file: videoPath,
       updated_at: toWrite.project.updated_at
     }
   }

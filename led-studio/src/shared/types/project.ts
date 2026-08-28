@@ -181,6 +181,12 @@ export interface ProjectMeta {
   name: string
   music_file?: string
   music_duration_ms: number
+  /** 參考影片檔。打包後為相對路徑 'reference.<ext>'，未打包時為絕對路徑 */
+  video_file?: string
+  /** 音樂時間 - 影片時間，單位 ms。可為負 */
+  video_offset_ms?: number
+  /** 影片是否靜音，預設 true（音樂才是主音源） */
+  video_muted?: boolean
   bpm: number
   created_at: string
   updated_at: string
@@ -276,6 +282,8 @@ export interface LedStudioApi {
     getMusicFileUrl(filePath: string): Promise<string>
     readMusicFile(filePath: string): Promise<{ data: Uint8Array<ArrayBuffer>; mime: string }>
     loadWaveformCache(musicFilePath: string, projectFilePath?: string): Promise<WaveformCacheResult | null>
+    pickVideoFile(): Promise<{ path: string } | null>
+    getVideoFileUrl(filePath: string): Promise<string>
   }
   show: {
     bridgeStart(options?: BridgeOptions): Promise<void>
