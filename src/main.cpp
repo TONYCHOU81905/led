@@ -98,12 +98,13 @@ static void logHealth(uint32_t now_ms) {
   formatShowTimeMmSs(show_ms, show_time, sizeof(show_time));
   Serial.printf(
       "[health] state=%s show=%s wifi=%s ip=%s rssi=%d sync=%s playing=%s seq=%u "
-      "udp_rx=%u udp_drop=%u last_pkt_age_ms=%u\n",
+      "udp_rx=%u udp_drop=%u udp_dup=%u last_pkt_age_ms=%u\n",
       stateName(g_state), show_time, wifi_connected ? "connected" : "disconnected",
       wifi_connected ? WiFi.localIP().toString().c_str() : "-",
       wifi_connected ? WiFi.RSSI() : 0, g_clock.hasSync() ? "yes" : "no",
       g_clock.isPlaying() ? "yes" : "no", g_clock.lastSequence(),
-      g_sync_rx.packetsReceived(), g_sync_rx.packetsDropped(), last_pkt_age);
+      g_sync_rx.packetsReceived(), g_sync_rx.packetsDropped(),
+      g_sync_rx.packetsDuplicated(), last_pkt_age);
 }
 
 static void renderStateIndicator(uint32_t now_ms) {
@@ -267,19 +268,25 @@ void loop() {
     logHealth(now_ms);
   }
 
-  if (g_state == STATE_PLAYING && g_clock.hasSync() && g_clock.isPlaying()) {
+  // 注意：這裡的條件刻意不看 g_clock.isPlaying()。進 blackout 時會呼叫
+  // g_clock.freeze() 把 _playing 設成 false，若條件依賴 isPlaying() 就會
+  // 立刻掉進 else 把 blackout 旗標清掉，下一輪又重新偵測 —— 燈光會閃爍。
+  if (g_state == STATE_PLAYING && g_clock.hasSync()) {
     const uint32_t last_pkt = g_sync_rx.lastPacketMs();
     if (last_pkt > 0 && now_ms >= last_pkt) {
       const uint32_t gap = now_ms - last_pkt;
       if (gap > TIMECODE_BLACKOUT_MS) {
         if (!g_timecode_blackout) {
           g_timecode_blackout = true;
-          Serial.printf("[sync] blackout: no timecode for %u ms\n", gap);
+          // 凍結時鐘，否則沒有時間源還會照 esp_timer 一直數下去：
+          // Studio 停在 3:02，板子 20 秒後已經跑到 3:19。
+          g_clock.freeze(now_us);
+          Serial.printf("[sync] blackout: no timecode for %u ms（時鐘凍結於 %u ms）\n",
+                        gap, g_clock.musicTimeMs(now_us));
         }
-      } else if (gap > TIMECODE_HOLD_MS) {
-        g_timecode_blackout = false;
-        // continue_local: clock keeps running without new packets
       } else {
+        // gap <= TIMECODE_BLACKOUT_MS：短暫掉包，clock 繼續本機推算即可
+        // （TIMECODE_HOLD_MS 之前分成兩個分支，但兩邊行為完全相同）。
         g_timecode_blackout = false;
       }
     } else {

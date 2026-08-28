@@ -6,6 +6,27 @@ export const TIMECODE_MAGIC = 0x4c544331 // 'LTC1'
 export const TIMECODE_PORT = 4210
 export const TIMECODE_RATE_HZ = 100
 
+/**
+ * 暫停時仍要送 PAUSE 心跳的間隔。
+ *
+ * 原本 tick() 在 paused 時直接 return，暫停後 app 一顆封包都不送。板子在
+ * TIMECODE_BLACKOUT_MS（2 秒）之後就失去時間源，而且拖動時間軸的預覽也送
+ * 不出去。持續告知「現在暫停在哪一點」才是對的：封包是冪等的（idempotent，
+ * 重複送同一個位置結果一樣），成本也只有 5 Hz。
+ */
+export const PAUSE_HEARTBEAT_MS = 200
+
+/**
+ * 控制封包（START/PAUSE/SEEK/STOP）重送次數。
+ *
+ * RUNNING 每秒有上百顆，掉幾顆無所謂；但控制封包原本只送一次，UDP 掉一顆
+ * 板子就永久失步 —— 例如 PAUSE 掉了，ESP 會一直以為還在播放並自由奔跑。
+ * 現場 RSSI −83 dBm 的環境掉包很常見，所以連送幾份。
+ */
+export const CONTROL_REPEAT = 4
+/** 控制封包重送的間隔；夠短，重送造成的重新錨定誤差可忽略。 */
+export const CONTROL_REPEAT_GAP_MS = 20
+
 export function interpolatePreviewTime(
   externalTimeMs: number,
   externalUpdatedAtMs: number,
@@ -128,28 +149,54 @@ function intToIpv4(value: number): string {
   ].join('.')
 }
 
-function resolveBroadcastAddresses(preferred?: string): string[] {
+export interface NetworkInterfaceLike {
+  internal: boolean
+  family: string
+  address: string
+  netmask: string
+}
+
+/**
+ * 決定要往哪些位址廣播 timecode。
+ *
+ * 每多一個目標，ESP 就多收到同一個 sequence 的一份複本。重複的那幾份帶著
+ * 已經過期的 music_time，會把韌體 ClockSync 的 drift filter 一路往負的拉，
+ * 最後演變成不斷觸發 hard seek（韌體端也已加上 sequence 去重，這裡是治本的
+ * 另一半）。所以只送必要的目標：
+ * - 略過 169.254.0.0/16 link-local（沒拿到 DHCP 時的自我指派位址，ESP 不會
+ *   在這個網段），這一條就少掉一份完全無用的複本。
+ * - 已經有具體的子網廣播位址時就不再送 255.255.255.255：兩者抵達同一批
+ *   主機，等於把每個封包無條件再複製一份。
+ */
+export function resolveBroadcastAddresses(
+  preferred?: string,
+  interfaceList?: NetworkInterfaceLike[]
+): string[] {
   const targets = new Set<string>()
   if (preferred && preferred.trim()) {
     targets.add(preferred.trim())
   }
 
-  const interfaces = os.networkInterfaces()
-  for (const entries of Object.values(interfaces)) {
-    for (const entry of entries ?? []) {
-      if (entry.internal || entry.family !== 'IPv4' || !entry.address || !entry.netmask) continue
-      try {
-        const ip = ipv4ToInt(entry.address)
-        const mask = ipv4ToInt(entry.netmask)
-        const broadcast = (ip & mask) | (~mask >>> 0)
-        targets.add(intToIpv4(broadcast >>> 0))
-      } catch {
-        // Ignore malformed interface entries.
-      }
+  const entries =
+    interfaceList ??
+    Object.values(os.networkInterfaces()).flatMap(
+      (list) => (list ?? []) as unknown as NetworkInterfaceLike[]
+    )
+
+  for (const entry of entries) {
+    if (entry.internal || entry.family !== 'IPv4' || !entry.address || !entry.netmask) continue
+    if (entry.address.startsWith('169.254.')) continue
+    try {
+      const ip = ipv4ToInt(entry.address)
+      const mask = ipv4ToInt(entry.netmask)
+      const broadcast = (ip & mask) | (~mask >>> 0)
+      targets.add(intToIpv4(broadcast >>> 0))
+    } catch {
+      // Ignore malformed interface entries.
     }
   }
 
-  targets.add('255.255.255.255')
+  if (targets.size === 0) targets.add('255.255.255.255')
   return [...targets]
 }
 
@@ -173,6 +220,8 @@ export class TimecodeBridgeService {
   private listeners = new Set<(state: BridgeState) => void>()
   private externalTimeMs: number | null = null
   private externalUpdatedAt = 0
+  private lastPauseHeartbeatAt = 0
+  private controlRepeatTimers = new Set<NodeJS.Timeout>()
 
   private debugLog(message: string): void {
     console.log(`[bridge] ${message}`)
@@ -226,6 +275,8 @@ export class TimecodeBridgeService {
     this.packetTimestamps = []
     this.socketReady = false
     this.lastDebugLogAt = 0
+    this.lastPauseHeartbeatAt = 0
+    this.clearControlRepeats()
 
     this.socket = dgram.createSocket('udp4')
     this.socket.on('error', (err) => {
@@ -244,8 +295,8 @@ export class TimecodeBridgeService {
       } else {
         this.debugLog('no known ESP unicast targets yet; broadcast only')
       }
-      this.sendPacket(PacketType.START)
-      if (this.paused) this.sendPacket(PacketType.PAUSE)
+      this.sendControlPacket(PacketType.START)
+      if (this.paused) this.sendControlPacket(PacketType.PAUSE)
       this.debugLog(`start source=${this.source}`)
     })
 
@@ -261,6 +312,14 @@ export class TimecodeBridgeService {
     if (this.source === 'ltc' || this.source === 'preview') {
       this.musicTimeMs = this.externalTimeMs
       if (this.running) {
+        if (this.paused) {
+          // 暫停中拖動時間軸：原本這裡只更新記憶體變數，封包只從 tick() 出
+          // 去，而 tick() 在 paused 時 early-return —— 板子完全收不到，燈光
+          // 不會跟著時間軸走。立刻補一顆 PAUSE 讓預覽即時反應，並把心跳計時
+          // 往後推，避免同一時間點被送兩次。
+          this.lastPauseHeartbeatAt = Date.now()
+          this.sendPacket(PacketType.PAUSE)
+        }
         this.emit()
       }
     }
@@ -269,7 +328,11 @@ export class TimecodeBridgeService {
   stop(): void {
     if (!this.running) return
 
-    this.sendPacket(PacketType.STOP)
+    // STOP 之後 socket 就要關掉，沒辦法用延遲重送；改成連續送幾份。
+    for (let i = 0; i < CONTROL_REPEAT; i++) {
+      this.sendPacket(PacketType.STOP)
+    }
+    this.clearControlRepeats()
     if (this.timer) {
       clearInterval(this.timer)
       this.timer = null
@@ -286,7 +349,8 @@ export class TimecodeBridgeService {
   pause(): void {
     if (!this.running || this.paused) return
     this.paused = true
-    this.sendPacket(PacketType.PAUSE)
+    this.lastPauseHeartbeatAt = Date.now()
+    this.sendControlPacket(PacketType.PAUSE)
     this.debugLog(`pause at music_ms=${this.musicTimeMs} (${msToMmSs(this.musicTimeMs)})`)
     this.emit()
   }
@@ -300,7 +364,9 @@ export class TimecodeBridgeService {
       this.externalTimeMs = this.musicTimeMs
       this.externalUpdatedAt = Date.now()
     }
-    this.sendPacket(PacketType.RUNNING)
+    // 用 sendControlPacket 而非 sendPacket：它會先取消還在排隊的 PAUSE 重送
+    // （否則播放後那幾顆遲到的 PAUSE 會把板子重新停住）。
+    this.sendControlPacket(PacketType.RUNNING)
     this.debugLog(`resume at music_ms=${this.musicTimeMs} (${msToMmSs(this.musicTimeMs)})`)
     this.emit()
   }
@@ -314,13 +380,30 @@ export class TimecodeBridgeService {
       this.externalTimeMs = this.musicTimeMs
       this.externalUpdatedAt = Date.now()
     }
-    this.sendPacket(PacketType.SEEK)
+    this.sendControlPacket(PacketType.SEEK)
+    if (this.paused) {
+      // 暫停中 seek：緊接著補一顆 PAUSE，板子才會明確停在新位置，不必等
+      // 下一次心跳。（韌體的 SEEK 已不再隱含「開始播放」。）
+      this.lastPauseHeartbeatAt = Date.now()
+      this.sendPacket(PacketType.PAUSE)
+    }
     this.debugLog(`seek to music_ms=${this.musicTimeMs} (${msToMmSs(this.musicTimeMs)})`)
     this.emit()
   }
 
   private tick(): void {
-    if (!this.running || this.paused) return
+    if (!this.running) return
+
+    if (this.paused) {
+      // 暫停時不能靜默：板子 2 秒沒收到封包就進 blackout 並失去時間源。
+      // 持續告知「暫停在 musicTimeMs 這一點」，板子才能穩定預覽該時間點。
+      const now = Date.now()
+      if (now - this.lastPauseHeartbeatAt >= PAUSE_HEARTBEAT_MS) {
+        this.lastPauseHeartbeatAt = now
+        this.sendPacket(PacketType.PAUSE)
+      }
+      return
+    }
 
     if (this.source === 'preview' && this.externalTimeMs !== null) {
       this.musicTimeMs = interpolatePreviewTime(
@@ -338,6 +421,32 @@ export class TimecodeBridgeService {
     this.emit()
   }
 
+  /**
+   * 送出一顆控制封包，並在之後重送幾份。
+   *
+   * 每一份都拿到新的 sequence，所以韌體的「同 sequence 去重」不會把重送吃
+   * 掉；而控制封包本身是冪等的，板子重複套用同一個位置沒有副作用。
+   */
+  private sendControlPacket(type: PacketType): void {
+    // 先取消還沒送出的舊重送。否則按下暫停後 30ms 內又按播放，排在 40ms 的
+    // PAUSE 重送會蓋掉剛送出的 RUNNING，板子就停在那裡不動了。
+    this.clearControlRepeats()
+    this.sendPacket(type)
+    for (let i = 1; i < CONTROL_REPEAT; i++) {
+      const timer = setTimeout(() => {
+        this.controlRepeatTimers.delete(timer)
+        // socket 可能已經在重送排程期間關掉（sendPacket 自己也會擋）。
+        this.sendPacket(type)
+      }, i * CONTROL_REPEAT_GAP_MS)
+      this.controlRepeatTimers.add(timer)
+    }
+  }
+
+  private clearControlRepeats(): void {
+    for (const timer of this.controlRepeatTimers) clearTimeout(timer)
+    this.controlRepeatTimers.clear()
+  }
+
   private sendPacket(type: PacketType): void {
     if (!this.socket || !this.socketReady) return
 
@@ -353,10 +462,16 @@ export class TimecodeBridgeService {
     for (const address of this.broadcastAddresses) {
       this.socket.send(packet, this.port, address)
     }
-    this.packetTimestamps.push(Date.now())
-
     const now = Date.now()
-    const isControlPacket = type !== PacketType.RUNNING
+    this.packetTimestamps.push(now)
+    // getState() 只看最近 1 秒，但這個陣列原本永遠不裁切：一場 5 分鐘的秀
+    // 會累積十幾萬筆，而且每次 getState() 都要整個 filter 一遍。
+    if (this.packetTimestamps.length > 2 * TIMECODE_RATE_HZ) {
+      this.packetTimestamps = this.packetTimestamps.filter((t) => now - t < 1000)
+    }
+
+    // PAUSE 現在是 5 Hz 心跳，跟 RUNNING 一樣要節流，否則 log 會被洗掉。
+    const isControlPacket = type !== PacketType.RUNNING && type !== PacketType.PAUSE
     if (isControlPacket || now - this.lastDebugLogAt >= 1000) {
       const typeName = PacketType[type] ?? String(type)
       this.debugLog(
