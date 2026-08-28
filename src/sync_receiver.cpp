@@ -45,6 +45,8 @@ bool SyncReceiver::begin(uint16_t port) {
   _last_debug_log_ms = 0;
   _last_drop_log_ms = 0;
   _has_logged_first_packet = false;
+  _has_processed_seq = false;
+  _last_processed_seq = 0;
   if (!_udp.begin(port)) {
     Serial.printf("[udp] failed to bind port %u\n", port);
     return false;
@@ -91,7 +93,12 @@ void SyncReceiver::handlePacket(const TimecodePacketV1 &pkt, ClockSync &clock,
     break;
   case TC_SEEK:
     clock.onSeek(pkt.music_time_ms, now_us);
-    state = STATE_PLAYING;
+    // SEEK 不改變播放狀態（見 clock_sync.cpp::onSeek）。唯一例外是還沒收過
+    // 任何時間源時：進 PAUSED，讓 Studio 一拖時間軸就能預覽該時間點，
+    // 否則會卡在 WAIT_TIMECODE 而不 render timeline。
+    if (state == STATE_WAIT_TIMECODE) {
+      state = STATE_PAUSED;
+    }
     break;
   case TC_PING:
     break;
@@ -109,6 +116,20 @@ void SyncReceiver::poll(ClockSync &clock, AppSyncState &state) {
       TimecodePacketV1 pkt{};
       _udp.read(reinterpret_cast<uint8_t *>(&pkt), sizeof(pkt));
       if (validatePacket(pkt)) {
+        // Studio 會同時送到多個 broadcast 位址加上 unicast，同一個 sequence
+        // 因此會抵達好幾份。重複的那幾份帶著「已經過期」的 music_time（送出
+        // 到現在又過了幾 ms），全部餵進 ClockSync 的 drift filter 會把
+        // _drift_offset_ms 一路往負的拉，估算時間越走越慢，直到誤差超過
+        // SYNC_SMOOTH_THRESHOLD_MS 觸發 hard seek —— 也就是 log 裡那串永遠
+        // 為正的 "hard seek error=" 。同一個 sequence 只處理第一份。
+        if (_has_processed_seq && pkt.sequence == _last_processed_seq) {
+          _dup_count++;
+          packetSize = _udp.parsePacket();
+          continue;
+        }
+        _has_processed_seq = true;
+        _last_processed_seq = pkt.sequence;
+
         handlePacket(pkt, clock, state);
         clock.setLastSequence(pkt.sequence);
         _rx_count++;
