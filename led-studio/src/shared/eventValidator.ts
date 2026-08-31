@@ -25,6 +25,12 @@ export interface ValidationResult {
 const SUPPORTED_SCHEMA = '1.0.0'
 const SUPPORTED_LED_GPIOS = new Set([4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 21])
 
+// 韌體 CRGB _leds[] 靜態陣列的大小上限，必須與 firmware 的 LED_COUNT_MAX 一致
+// （src/types.h:10，由 platformio.ini 的 -DLED_COUNT_MAX 覆寫）。
+// 兩邊各自編譯、無法共用常數，改一邊就要同步改另一邊，否則 Studio 會擋掉
+// 韌體其實跑得動的設定，或放行韌體會拒絕的設定。
+export const FIRMWARE_LED_COUNT_MAX = 1024
+
 function validatePartRanges(parts: PartDefinition[], ledCount: number, errors: ValidationIssue[]): void {
   const seen = new Set<string>()
   for (const part of parts) {
@@ -152,8 +158,11 @@ export function validateRole(role: RoleDefinition, colors: Record<string, RgbCol
       errors.push({ code: 'OUTPUT_PART_MISMATCH', message: 'LED output parameters and part ranges are out of sync' })
     }
     const total = role.led_outputs.reduce((sum, output) => sum + logicalLedCountForOutput(output), 0)
-    if (total > 640) {
-      errors.push({ code: 'LED_LIMIT_EXCEEDED', message: `Logical LED count ${total} exceeds firmware limit 640` })
+    if (total > FIRMWARE_LED_COUNT_MAX) {
+      errors.push({
+        code: 'LED_LIMIT_EXCEEDED',
+        message: `Logical LED count ${total} exceeds firmware limit ${FIRMWARE_LED_COUNT_MAX}`
+      })
     }
   }
 
