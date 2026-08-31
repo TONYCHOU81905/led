@@ -58,6 +58,22 @@
 
 static CRGB leds[TEST_COUNT];
 
+/**
+ * 五支腳同時推同一份畫面。
+ *
+ * 主韌體對 GPIO 4/5/6/7/15 都推資料，所以不管燈條實際插在哪支腳上都會亮；
+ * 先前只推 GPIO 4 的版本卻完全不亮，最可能就是燈條並不在 GPIO 4 上。
+ * 這裡把五支腳都掛上同一個 leds 陣列（共用 buffer，不額外吃 RAM），
+ * 讓「接錯腳」這個變因先被排除掉，A/D/E 的判別邏輯完全不受影響。
+ */
+static void addAllOutputs() {
+  FastLED.addLeds<WS2812B, 4, GRB>(leds, TEST_COUNT).setCorrection(TypicalLEDStrip);
+  FastLED.addLeds<WS2812B, 5, GRB>(leds, TEST_COUNT).setCorrection(TypicalLEDStrip);
+  FastLED.addLeds<WS2812B, 6, GRB>(leds, TEST_COUNT).setCorrection(TypicalLEDStrip);
+  FastLED.addLeds<WS2812B, 7, GRB>(leds, TEST_COUNT).setCorrection(TypicalLEDStrip);
+  FastLED.addLeds<WS2812B, 15, GRB>(leds, TEST_COUNT).setCorrection(TypicalLEDStrip);
+}
+
 static void banner(const char *stage, const char *what, const char *meaning) {
   Serial.println();
   Serial.printf("--- 階段 %s：%s\n", stage, what);
@@ -75,13 +91,13 @@ void setup() {
   delay(600);
   Serial.println();
   Serial.println("=== 壓降 vs 訊號 判別韌體 ===");
-  Serial.printf("[droop] GPIO=%d  設定顆數=%d  chipset=WS2812B  order=GRB\n",
-                TEST_GPIO, TEST_COUNT);
+  Serial.printf("[droop] GPIO=4,5,6,7,15（五支同時推）  設定顆數=%d  chipset=WS2812B  order=GRB\n",
+                TEST_COUNT);
+  Serial.println("[droop] 五支腳推同一份畫面，所以燈條插在哪支腳都會亮。");
   Serial.println("[droop] 每個階段停 5 秒，看完一輪會從頭重複。");
   Serial.println("[droop] 重點看 A / D / E 三個階段的差別。");
 
-  FastLED.addLeds<WS2812B, TEST_GPIO, GRB>(leds, TEST_COUNT)
-      .setCorrection(TypicalLEDStrip);
+  addAllOutputs();
   FastLED.clear(true);
 }
 
