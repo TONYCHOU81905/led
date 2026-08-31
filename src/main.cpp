@@ -9,6 +9,8 @@
 #include "timeline_engine.h"
 #include "wifi_manager.h"
 #include "time_format.h"
+#include "local_trigger.h"
+#include "local_sync_peer.h"
 
 static DeviceConfig g_config;
 static ConfigLoader g_config_loader;
@@ -20,6 +22,10 @@ static StatusReporter g_status;
 static SerialProtocol g_serial;
 static TimelineEngine g_timeline;
 static AppSyncState g_state = STATE_BOOT;
+
+static LocalTrigger g_local_trigger;
+static LocalSyncPeer g_local_sync;
+static bool g_local_mode = false;
 
 static int64_t last_frame_us = 0;
 static bool g_timecode_blackout = false;
@@ -98,13 +104,14 @@ static void logHealth(uint32_t now_ms) {
   formatShowTimeMmSs(show_ms, show_time, sizeof(show_time));
   Serial.printf(
       "[health] state=%s show=%s wifi=%s ip=%s rssi=%d sync=%s playing=%s seq=%u "
-      "udp_rx=%u udp_drop=%u udp_dup=%u last_pkt_age_ms=%u\n",
+      "udp_rx=%u udp_drop=%u udp_dup=%u last_pkt_age_ms=%u local_mode=%s\n",
       stateName(g_state), show_time, wifi_connected ? "connected" : "disconnected",
       wifi_connected ? WiFi.localIP().toString().c_str() : "-",
       wifi_connected ? WiFi.RSSI() : 0, g_clock.hasSync() ? "yes" : "no",
       g_clock.isPlaying() ? "yes" : "no", g_clock.lastSequence(),
       g_sync_rx.packetsReceived(), g_sync_rx.packetsDropped(),
-      g_sync_rx.packetsDuplicated(), last_pkt_age);
+      g_sync_rx.packetsDuplicated(), last_pkt_age,
+      g_local_mode ? "on" : "off");
 }
 
 static void renderStateIndicator(uint32_t now_ms) {
@@ -194,6 +201,13 @@ void setup() {
   g_state = STATE_WIFI_CONNECTING;
 #endif
 
+  // 本機備援模式初始化
+  g_local_trigger.begin();
+  if (!g_local_sync.begin()) {
+    // ESP-NOW 初始化失敗時降級成「只管自己」，不影響本機播放能力
+    Serial.println("[app] ESP-NOW init failed — local mode will operate in standalone mode");
+  }
+
   last_frame_us = esp_timer_get_time();
 }
 
@@ -222,11 +236,38 @@ void loop() {
 
   const bool wifi_connected = g_wifi.isConnected();
 
+  // 本機備援模式：實體開關和 ESP-NOW 通訊
+  g_local_trigger.poll(now_ms);
+  g_local_sync.ensureChannel(wifi_connected);
+  g_local_sync.tick(now_ms, g_local_trigger.isOn(), g_clock.musicTimeMs(now_us));
+
+  const bool want_local = g_local_trigger.isOn() || g_local_sync.anyPeerOn(now_ms);
+
+  // 進入本機備援模式
+  if (want_local && !g_local_mode) {
+    g_local_mode = true;
+    // 若已在播放，從當前位置接續；否則從 0 開始
+    const uint32_t start = g_clock.isPlaying() ? g_clock.musicTimeMs(now_us) : 0;
+    g_clock.onStart(start, now_us);
+    g_state = STATE_PLAYING;
+    Serial.printf("[local] 進入本機備援模式，起點: %u ms\n", start);
+  }
+
+  // 退出本機備援模式
+  if (!want_local && g_local_mode) {
+    g_local_mode = false;
+    g_clock.setPlaying(false);
+    g_state = wifi_connected ? STATE_WAIT_TIMECODE : STATE_WIFI_CONNECTING;
+    Serial.printf("[local] 退出本機備援模式，狀態切換至 %s\n", stateName(g_state));
+  }
+
   // UDP socket 只有在 WiFi 連上、startNetworkServices() 跑過之後才有效。
   // 未連線時照樣呼叫 parsePacket / endPacket，會每個 frame 噴一次
   //   [E][WiFiUdp.cpp:221] parsePacket(): could not receive data: 9
   // 把 serial log 完全洗掉，也讓 Studio 端更難讀到指令回應。
-  if (wifi_connected) {
+  // 本機備援模式期間完全忽略網路 timecode —— 直到開關彈起才交還控制權。
+  // 不然在不穩定的場地會造成燈光反覆跳動與凍結，正是本備援模式要避免的狀況。
+  if (wifi_connected && !g_local_mode) {
     g_sync_rx.poll(g_clock, g_state);
   }
 
@@ -271,7 +312,14 @@ void loop() {
   // 注意：這裡的條件刻意不看 g_clock.isPlaying()。進 blackout 時會呼叫
   // g_clock.freeze() 把 _playing 設成 false，若條件依賴 isPlaying() 就會
   // 立刻掉進 else 把 blackout 旗標清掉，下一輪又重新偵測 —— 燈光會閃爍。
-  if (g_state == STATE_PLAYING && g_clock.hasSync()) {
+  //
+  // 本機備援模式時不做 blackout 凍結 —— 這是極其重要的陷阱修補。
+  // onStart(start, now_us) 會呼叫 applyHardSeek 把 _synced 設成 true，
+  // 若不擋掉這個條件，曾經連過 WiFi 的板子會因為 _last_packet_ms 停在舊值
+  // 而立刻計算出好幾萬 ms 的 gap、超過 TIMECODE_BLACKOUT_MS，凍結時鐘。
+  // 結果：按下本機按鈕，燈光亮不到一瞬間就被凍結。這種只在「曾連過網」的板子上
+  // 出現的 bug 最難查。
+  if (g_state == STATE_PLAYING && g_clock.hasSync() && !g_local_mode) {
     const uint32_t last_pkt = g_sync_rx.lastPacketMs();
     if (last_pkt > 0 && now_ms >= last_pkt) {
       const uint32_t gap = now_ms - last_pkt;
