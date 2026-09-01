@@ -1,7 +1,10 @@
-import { app, BrowserWindow, dialog, ipcMain, net, protocol } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, protocol } from 'electron'
 import { join, isAbsolute } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { readFile, writeFile, stat } from 'node:fs/promises'
+import { createReadStream } from 'node:fs'
+import { mediaContentType, parseRangeHeader } from './services/mediaRange'
+import { Readable } from 'node:stream'
 import { buildFirmware, checkFirmwareBuildAvailability, flashFirmware } from './services/flasher'
 import { espStatusListener, type EspDeviceStatus } from './services/espStatusListener'
 import { ltcSidecar } from './services/ltcSidecar'
@@ -170,9 +173,9 @@ function createWindow(): void {
  * blob: URL 那條路；但影片動輒數百 MB 到 GB，整個讀進記憶體不可行，而且
  * blob 也不利於 seek。
  *
- * 用 net.fetch 轉發到 file://，Electron 會處理 range request，<video> 才能
- * 邊播邊 seek 而不是整個載完 —— 前提是原始 request 的 headers 要一起帶過去，
- * 否則 Range 遺失，seek 就會失敗。
+ * handler 自己讀檔案區間並回 206 Partial Content，不轉發給 file://。
+ * <video> 的 seek 完全依賴 206 + Content-Range，拿到 200 全檔就無法定位，
+ * currentTime 會一直停在 0。自己處理才能確定行為。
  *
  * registerSchemesAsPrivileged 必須在 app ready 之前呼叫。
  */
@@ -184,7 +187,7 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 app.whenReady().then(() => {
-  protocol.handle('app-media', (request) => {
+  protocol.handle('app-media', async (request) => {
     try {
       // app-media://local/<URL 編碼後的絕對路徑>
       const url = new URL(request.url)
@@ -193,19 +196,44 @@ app.whenReady().then(() => {
       if (!isAbsolute(filePath)) {
         return new Response('bad path', { status: 400 })
       }
-      // headers 必須原封不動轉發，關鍵在 Range。
+
+      // 這裡自己處理 Range，而不是把 header 轉發給 net.fetch(file://)。
       //
-      // <video> 只要 seek 或需要重新 buffer 就會送 Range: bytes=N-，期待拿回
-      // 206 Partial Content。先前這裡建了一個全新的 fetch、沒帶原始 headers，
-      // 檔案每次都從頭回傳 200 OK，解碼器拿到的資料位置跟它要的對不上，
-      // 就丟出 MEDIA_ERR_DECODE。
+      // <video> 每次 seek 都會送 Range: bytes=N-，並且期待拿回 206 Partial
+      // Content 加上 Content-Range。轉發給 file:// 不保證會得到 206 ——
+      // 拿到 200 全檔時 Chromium 無法定位，currentTime 會一直停在 0，
+      // 表現就是「第一次從頭播正常，之後怎麼拖都回到 00:00」。
       //
-      // 症狀是間歇性的，很容易誤判成 codec 問題：從頭一路播不需要 Range 所以
-      // 正常，一拖動進度條就壞。
-      return net.fetch(pathToFileURL(filePath).toString(), {
-        bypassCustomProtocolHandlers: true,
-        headers: request.headers
-      })
+      // 自己讀檔案區間並回 206 才能確定行為，不依賴底層 protocol 的實作細節。
+      const fileStat = await stat(filePath)
+      const contentType = mediaContentType(filePath)
+      const range = parseRangeHeader(request.headers.get('Range'), fileStat.size)
+
+      if (!range) {
+        return new Response(Readable.toWeb(createReadStream(filePath)) as ReadableStream, {
+          status: 200,
+          headers: {
+            'Content-Type': contentType,
+            'Content-Length': String(fileStat.size),
+            // 少了這個 Chromium 不會嘗試 seek，進度條會變成不能拖
+            'Accept-Ranges': 'bytes'
+          }
+        })
+      }
+
+      const { start, end } = range
+      return new Response(
+        Readable.toWeb(createReadStream(filePath, { start, end })) as ReadableStream,
+        {
+          status: 206,
+          headers: {
+            'Content-Type': contentType,
+            'Content-Length': String(end - start + 1),
+            'Content-Range': `bytes ${start}-${end}/${fileStat.size}`,
+            'Accept-Ranges': 'bytes'
+          }
+        }
+      )
     } catch (err) {
       return new Response(String(err), { status: 500 })
     }
