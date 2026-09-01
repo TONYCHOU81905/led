@@ -171,7 +171,8 @@ function createWindow(): void {
  * blob 也不利於 seek。
  *
  * 用 net.fetch 轉發到 file://，Electron 會處理 range request，<video> 才能
- * 邊播邊 seek 而不是整個載完。
+ * 邊播邊 seek 而不是整個載完 —— 前提是原始 request 的 headers 要一起帶過去，
+ * 否則 Range 遺失，seek 就會失敗。
  *
  * registerSchemesAsPrivileged 必須在 app ready 之前呼叫。
  */
@@ -192,7 +193,19 @@ app.whenReady().then(() => {
       if (!isAbsolute(filePath)) {
         return new Response('bad path', { status: 400 })
       }
-      return net.fetch(pathToFileURL(filePath).toString(), { bypassCustomProtocolHandlers: true })
+      // headers 必須原封不動轉發，關鍵在 Range。
+      //
+      // <video> 只要 seek 或需要重新 buffer 就會送 Range: bytes=N-，期待拿回
+      // 206 Partial Content。先前這裡建了一個全新的 fetch、沒帶原始 headers，
+      // 檔案每次都從頭回傳 200 OK，解碼器拿到的資料位置跟它要的對不上，
+      // 就丟出 MEDIA_ERR_DECODE。
+      //
+      // 症狀是間歇性的，很容易誤判成 codec 問題：從頭一路播不需要 Range 所以
+      // 正常，一拖動進度條就壞。
+      return net.fetch(pathToFileURL(filePath).toString(), {
+        bypassCustomProtocolHandlers: true,
+        headers: request.headers
+      })
     } catch (err) {
       return new Response(String(err), { status: 500 })
     }
