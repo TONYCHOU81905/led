@@ -183,11 +183,16 @@ export function VideoReferencePanel({
             }}
             onError={(e) => {
               const err = e.currentTarget.error
+              // code 3 與 code 4 是兩件不同的事，標錯會把排查方向整個帶偏：
+              // 3 = MEDIA_ERR_DECODE，檔案讀得進來但播到一半解碼中斷
+              //     （常見成因是 Range request 沒被正確處理，而不是 codec）
+              // 4 = MEDIA_ERR_SRC_NOT_SUPPORTED，這個才是真的格式/codec 不支援，
+              //     而且會在一開始就失敗、連時間軸都不會有
               const codes: Record<number, string> = {
                 1: '載入被中止',
                 2: '網路錯誤',
-                3: '解碼失敗（codec 不支援）',
-                4: '來源格式不支援'
+                3: '解碼中斷（檔案讀取或串流問題，不一定是 codec）',
+                4: '來源格式不支援（codec 或容器格式）'
               }
               setMediaError(err ? (codes[err.code] ?? `錯誤代碼 ${err.code}`) : '未知錯誤')
             }}
