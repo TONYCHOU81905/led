@@ -25,11 +25,11 @@ const legacyRole: RoleDefinition = {
 }
 
 describe('legacy LED output migration', () => {
-  it('materializes the five channels instead of leaving display-only defaults', () => {
+  it('materializes the six channels instead of leaving display-only defaults', () => {
     const migrated = migrateRoleToFiveOutputs(legacyRole)
-    expect(migrated.led_outputs?.map((output) => output.gpio)).toEqual([4, 5, 6, 7, 15])
+    expect(migrated.led_outputs?.map((output) => output.gpio)).toEqual([4, 5, 6, 7, 15, 16])
     expect(migrated.parts.map((part) => part.id)).toEqual([
-      'head', 'right_hand', 'right_foot', 'left_foot', 'left_hand'
+      'head', 'right_hand', 'right_foot', 'left_foot', 'left_hand', 'shoes'
     ])
   })
 
@@ -48,16 +48,16 @@ describe('legacy LED output migration', () => {
     const source = { ...createEmptyProject('Legacy'), roles: [legacyRole] }
     const migrated = migrateProjectToFiveOutputs(source)
     expect(migrated.fixes).toHaveLength(1)
-    expect(migrated.project.roles[0].led_outputs).toHaveLength(5)
+    expect(migrated.project.roles[0].led_outputs).toHaveLength(6)
   })
 
-  it('also enforces five outputs when a legacy role is compiled directly', () => {
+  it('also enforces six outputs when a legacy role is compiled directly', () => {
     const config = compileRoleToDeviceConfig(legacyRole, { red: { r: 255, g: 0, b: 0 } }, {
       deviceId: 'legacy-board',
       ledType: 'WS2812B'
     })
-    expect(config.device.outputs?.map((output) => output.gpio)).toEqual([4, 5, 6, 7, 15])
-    expect(config.device.led_count).toBe(580)
+    expect(config.device.outputs?.map((output) => output.gpio)).toEqual([4, 5, 6, 7, 15, 16])
+    expect(config.device.led_count).toBe(640)
     expect(config.events[0].targets).toEqual(['right_hand', 'left_hand'])
   })
 

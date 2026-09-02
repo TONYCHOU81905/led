@@ -1,8 +1,8 @@
 import type { LedOutputDefinition, PartDefinition } from './types/project'
 
-/** 五個 WS2812B 輸出依舞者本人視角的編排順序。 */
+/** 六個 WS2812B 輸出依舞者本人視角的編排順序。 */
 export const CHAIN_WIRING_ORDER_HINT =
-  '帽子 → 右手 → 右腳 → 左腳 → 左手（舞者本人視角）'
+  '帽子 → 右手 → 右腳 → 左腳 → 左手 → 鞋子（舞者本人視角）'
 
 /** ESP32-S3 上可安全用來驅動 WS2812B 的 GPIO（避開 strapping / flash / USB 腳位） */
 export const SAFE_GPIO_OPTIONS = [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 21]
@@ -38,6 +38,20 @@ export const DEFAULT_LED_OUTPUTS: LedOutputDefinition[] = [
     id: 'left_arm', display_name: '左手', part_id: 'left_hand', gpio: 15,
     layout: 'branched_limb', outbound_leds: 60, parallel_branches: 5,
     branch_leds: 10, return_leds: 60, continuation_branch: 5, direction: 'out_and_back'
+  },
+  {
+    // 第 6 個通道。GPIO 16 的三重確認：在 SUPPORTED_LED_GPIOS 清單內、
+    // led_driver.cpp 有 LED_GPIO_CASE(16)（FastLED 的 pin 是編譯期 template，
+    // 沒有對應 case 就不能用），且非 strapping / native USB / octal PSRAM 腳位。
+    //
+    // part_id 用 'shoes'：partRegionMap 認得這個 key，燈光預覽會自動把顏色
+    // 畫到人形圖的左右鞋兩塊區域上。
+    //
+    // 注意這份預設也會被 legacy 專案的 migration 套用，所以舊專案載入後
+    // 會多出這個通道（logical 580 → 640）。這是刻意的：鞋子屬於標準服裝配置。
+    id: 'shoes', display_name: '鞋子', part_id: 'shoes', gpio: 16, layout: 'ring',
+    outbound_leds: 60, parallel_branches: 1, branch_leds: 0, return_leds: 0,
+    continuation_branch: 1, direction: 'clockwise'
   }
 ]
 

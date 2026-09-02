@@ -41,18 +41,22 @@ describe('partRegionMap', () => {
   })
 
   it('exposes the physical wiring order for the flow guide', () => {
-    expect(FIGURE_FLOW_ORDER).toEqual(['head', 'right_hand', 'right_foot', 'left_foot', 'left_hand'])
-    expect(FIGURE_FLOW_ORDER).toHaveLength(5)
+    expect(FIGURE_FLOW_ORDER).toEqual([
+      'head', 'right_hand', 'right_foot', 'left_foot', 'left_hand', 'right_shoe', 'left_shoe'
+    ])
+    expect(FIGURE_FLOW_ORDER).toHaveLength(7)
   })
 
   it('only returns regions that the default chain parts actually wire up', () => {
     const parts = cloneDefaultChainParts()
     const regions = regionsForParts(parts)
 
-    expect(regions).toEqual(['head', 'left_hand', 'right_hand', 'left_foot', 'right_foot'])
+    // 預設鏈現在含鞋子通道（part_id: shoes），所以左右鞋也會出現
+    expect(regions).toEqual([
+      'head', 'left_hand', 'right_hand', 'left_foot', 'right_foot', 'left_shoe', 'right_shoe'
+    ])
+    // body 沒有任何通道對應，仍然不該出現
     expect(regions).not.toContain('body')
-    expect(regions).not.toContain('left_shoe')
-    expect(regions).not.toContain('right_shoe')
   })
 
   it('returns an empty list for no parts', () => {

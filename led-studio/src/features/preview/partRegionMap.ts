@@ -44,10 +44,36 @@ export const FIGURE_FLOW_ORDER: FigureRegionId[] = [
   'right_hand',
   'right_foot',
   'left_foot',
-  'left_hand'
+  'left_hand',
+  'right_shoe',
+  'left_shoe'
 ]
 
 const OFF_COLOR: ResolvedColor = { r: 28, g: 32, b: 40, visible: false }
+
+/**
+ * 可以在 LED 通道設定裡挑選的「預覽對應部位」。
+ *
+ * 這些字串就是 partIdToRegions 認得的 key —— 通道的 part_id 必須是其中之一，
+ * 燈光預覽才知道要把顏色畫到人形圖的哪一塊。
+ *
+ * 新增通道時 addLedOutput 會給一個 part_<隨機碼> 當 part_id（保證唯一、
+ * 不會撞到既有 clip 的 targets），那個值不對應任何預覽區域，
+ * 所以使用者必須在這裡挑一個，預覽才會亮。
+ */
+export const PREVIEW_PART_OPTIONS: Array<{ id: string; label: string }> = [
+  { id: 'head', label: '頭 / 帽子' },
+  { id: 'body', label: '身體' },
+  { id: 'right_hand', label: '右手' },
+  { id: 'left_hand', label: '左手' },
+  { id: 'hands', label: '雙手' },
+  { id: 'right_foot', label: '右腳' },
+  { id: 'left_foot', label: '左腳' },
+  { id: 'feet', label: '雙腳' },
+  { id: 'right_shoe', label: '右鞋' },
+  { id: 'left_shoe', label: '左鞋' },
+  { id: 'shoes', label: '鞋子（左右一起）' }
+]
 
 export function partIdToRegions(partId: PartId): FigureRegionId[] {
   const id = partId.toLowerCase()
