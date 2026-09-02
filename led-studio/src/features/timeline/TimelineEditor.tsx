@@ -9,6 +9,8 @@ import { loadMusicFromPath } from './audioAnalysis'
 import { CopyTimelineControl } from './CopyTimelineControl'
 import { DancerPreviewPanel } from '../preview/DancerPreviewPanel'
 import { VideoReferencePanel } from '../preview/VideoReferencePanel'
+import { useUndoHistory } from './hooks/useUndoHistory'
+import { shiftSelectionToEnd, shiftSelectionToStart } from './selectionShift'
 import { EventInspector } from './EventInspector'
 import { TimelineCanvas } from './TimelineCanvas'
 import { applyDurationToSelection, buildSelectionPatch } from './batchPatch'
@@ -308,11 +310,34 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [musicUrl, followPlayhead])
 
-  const setEvents = (events: TimelineEventUI[]) => {
+  const history = useUndoHistory<TimelineEventUI[]>()
+
+  // 切換角色時清空 undo 堆疊。否則 undo 會把使用者拉回「另一個角色」的 events，
+  // 靜默覆蓋掉目前角色的內容 —— 那是完全無法理解的行為。
+  const historyRoleRef = useRef(role.role_id)
+  if (historyRoleRef.current !== role.role_id) {
+    historyRoleRef.current = role.role_id
+    history.reset()
+  }
+
+  /** 不記錄 undo 的寫入（undo / redo 自己還原時用，否則會把還原也記成一步）。 */
+  const writeEvents = (events: TimelineEventUI[]) => {
     onProjectChange({
       ...project,
       roles: project.roles.map((r) => (r.role_id === role.role_id ? { ...r, events } : r))
     })
+  }
+
+  /**
+   * 所有 timeline 編輯的唯一出口，寫入前先把「改動之前」的狀態推進 undo 堆疊。
+   *
+   * 粒度會自動正確：TimelineCanvas 拖曳期間只更新自己的 liveEvents，
+   * 一直到 pointerUp 才呼叫這裡一次，所以一次拖曳 = 一步 undo，
+   * 而不是滑鼠移動幾十次就產生幾十步。
+   */
+  const setEvents = (events: TimelineEventUI[]) => {
+    history.commit(role.events)
+    writeEvents(events)
   }
 
   useEffect(() => {
@@ -322,6 +347,21 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
 
       const mod = e.metaKey || e.ctrlKey
       const key = e.key.toLowerCase()
+
+      // Cmd/Ctrl+Z 復原、Cmd/Ctrl+Shift+Z 重做。
+      // 還原時走 writeEvents 而不是 setEvents —— 用 setEvents 會把「還原」
+      // 本身也記成一步，按第二次 undo 就會在兩個狀態之間彈來彈去。
+      if (mod && key === 'z') {
+        e.preventDefault()
+        if (e.shiftKey) {
+          const next = history.redo(role.events)
+          if (next) writeEvents(next)
+        } else {
+          const prev = history.undo(role.events)
+          if (prev) writeEvents(prev)
+        }
+        return
+      }
 
       if (mod && key === 'c') {
         // 複製整個選取集合，clipboard 會保留成員之間的相對時間關係
@@ -409,7 +449,39 @@ export function TimelineEditor({ project, projectFilePath, role, onProjectChange
       onProjectChange(updateEvent(project, role.role_id, selectedId, patch))
       return
     }
-    setEvents(buildSelectionPatch(role.events, selectedId, selectedIds, patch))
+
+    // 多選改時間走 delta 路徑：算出主選取的變動量，整組一起平移／等量伸縮。
+    // 不能交給 buildSelectionPatch —— 它會把絕對時間套到每個成員，
+    // 所有 clip 會疊在同一個時間點（這也是 from/to 被列進 PRIMARY_ONLY_KEYS 的原因）。
+    let next = role.events
+    let timeHandled = false
+
+    if (patch.from !== undefined) {
+      const ms = tryParseTimeToMs(patch.from)
+      if (ms !== null) {
+        next = shiftSelectionToStart(next, selectedId, selectedIds, ms, durationMs)
+        timeHandled = true
+      }
+    }
+    if (patch.to !== undefined) {
+      const ms = tryParseTimeToMs(patch.to)
+      if (ms !== null) {
+        next = shiftSelectionToEnd(next, selectedId, selectedIds, ms, durationMs)
+        timeHandled = true
+      }
+    }
+
+    // 其餘欄位維持原本的共享規則
+    const rest: Partial<TimelineEventUI> = { ...patch }
+    delete rest.from
+    delete rest.to
+    if (Object.keys(rest).length > 0) {
+      next = buildSelectionPatch(next, selectedId, selectedIds, rest)
+    } else if (!timeHandled) {
+      return
+    }
+
+    setEvents(next)
   }
 
   /** 多選時把整組 clip 統一設成同一個片段長度（各自固定開頭、只動結尾）。 */

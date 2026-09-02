@@ -31,6 +31,11 @@ const SUPPORTED_LED_GPIOS = new Set([4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 1
 // 韌體其實跑得動的設定，或放行韌體會拒絕的設定。
 export const FIRMWARE_LED_COUNT_MAX = 1024
 
+// 韌體 LedOutputConfig outputs[] 陣列的大小上限，必須與 firmware 的
+// MAX_LED_OUTPUTS 一致（src/types.h:17）。同樣是兩邊各自編譯、無法共用常數，
+// 改一邊就要同步改另一邊。
+export const FIRMWARE_MAX_LED_OUTPUTS = 6
+
 function validatePartRanges(parts: PartDefinition[], ledCount: number, errors: ValidationIssue[]): void {
   const seen = new Set<string>()
   for (const part of parts) {
@@ -131,8 +136,11 @@ export function validateRole(role: RoleDefinition, colors: Record<string, RgbCol
   validatePartRanges(role.parts, computeLedCountFromParts(role.parts), errors)
 
   if (role.led_outputs) {
-    if (role.led_outputs.length < 1 || role.led_outputs.length > 5) {
-      errors.push({ code: 'INVALID_OUTPUT_COUNT', message: 'LED outputs must contain 1 to 5 channels' })
+    if (role.led_outputs.length < 1 || role.led_outputs.length > FIRMWARE_MAX_LED_OUTPUTS) {
+      errors.push({
+        code: 'INVALID_OUTPUT_COUNT',
+        message: `LED outputs must contain 1 to ${FIRMWARE_MAX_LED_OUTPUTS} channels`
+      })
     }
     const gpios = new Set<number>()
     for (const output of role.led_outputs) {
