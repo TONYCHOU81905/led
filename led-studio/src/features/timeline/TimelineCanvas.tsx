@@ -158,6 +158,49 @@ export function applyGroupDelta(
   })
 }
 
+/**
+ * 多選 resize：整組一起延長／縮短，每個 clip 變動相同的毫秒數（等量，不是等比例）。
+ *
+ * 跟 applyGroupDelta 同樣採「先算全體容許的 delta，再一次套用」：
+ * 若各自 clamp，短的 clip 先撞到最小長度停住、長的繼續縮，選取集合裡的
+ * 長度關係就被改掉了。整組 clamp 才能讓相對關係維持不變。
+ *
+ * origById 是拖曳開始時的快照，所以整段拖曳過程都以起始狀態為基準換算，
+ * 不會因為中途的捨入而累積誤差。
+ */
+export function applyGroupResize(
+  events: TimelineEventUI[],
+  origById: Record<string, { start: number; end: number }>,
+  edge: 'left' | 'right',
+  delta: number
+): TimelineEventUI[] {
+  const ids = Object.keys(origById)
+  if (ids.length === 0) return events
+
+  let d = delta
+  for (const id of ids) {
+    const o = origById[id]
+    const len = o.end - o.start
+    if (edge === 'right') {
+      // 右緣往左 = 縮短，長度不得小於 MIN_CLIP_MS
+      if (d < 0) d = Math.max(d, MIN_CLIP_MS - len)
+    } else {
+      // 左緣往右 = 縮短；往左 = 提前，不得早於 0
+      if (d > 0) d = Math.min(d, len - MIN_CLIP_MS)
+      if (d < 0) d = Math.max(d, -o.start)
+    }
+  }
+
+  return events.map((e) => {
+    const orig = origById[e.id]
+    if (!orig) return e
+    const newStart = edge === 'left' ? orig.start + d : orig.start
+    const newEnd = edge === 'right' ? orig.end + d : orig.end
+    const { from, to } = msToFromTo(newStart, newEnd)
+    return { ...e, from, to }
+  })
+}
+
 function patchEvent(
   events: TimelineEventUI[],
   eventId: string,
@@ -655,8 +698,18 @@ export function TimelineCanvas(props: TimelineCanvasProps) {
       return
     }
 
-    // resize 一律只作用被拖曳的那一個 event，即使目前是多選狀態。
-    const next = patchEvent(displayEvents, eventId, newStart, newEnd)
+    // 多選時整組一起等量伸縮；單選就只動自己。
+    // origById 是按下去那一刻的快照，整組以它為基準換算，避免累積誤差。
+    const origById = drag.origById
+    let next: TimelineEventUI[]
+    if (origById && Object.keys(origById).length > 1) {
+      const edge = drag.mode === 'resize-left' ? 'left' : 'right'
+      const delta =
+        edge === 'left' ? newStart - drag.origStartMs : newEnd - drag.origEndMs
+      next = applyGroupResize(props.events, origById, edge, delta)
+    } else {
+      next = patchEvent(displayEvents, eventId, newStart, newEnd)
+    }
     liveEventsRef.current = next
     setLiveEvents(next)
   }
@@ -745,8 +798,11 @@ export function TimelineCanvas(props: TimelineCanvasProps) {
       props.onSelectionChange(nextSelection)
 
       const ev = displayEvents.find((x) => x.id === id)!
+      // move 與 resize 都要這份快照：整段拖曳都以按下去那一刻的狀態為基準換算，
+      // 才不會因為中途反覆讀取已被修改的值而累積誤差。
+      // resize 原本不建快照（只動被拖的那一個），改成多選整組伸縮後同樣需要。
       let origById: Record<string, { start: number; end: number }> | undefined
-      if (mode === 'move') {
+      if (mode === 'move' || mode === 'resize-left' || mode === 'resize-right') {
         origById = {}
         for (const sid of nextSelection) {
           const sev = displayEvents.find((x) => x.id === sid)

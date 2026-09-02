@@ -11,7 +11,10 @@
 #endif
 
 #define MAX_PARTS 8
-#define MAX_LED_OUTPUTS 5
+// 5 個部位（帽子/右手/右腳/左腳/左手）之外再加鞋子，所以是 6。
+// 改這裡務必同步改 led-studio/src/shared/eventValidator.ts 的
+// FIRMWARE_MAX_LED_OUTPUTS，兩邊各自編譯、沒有共用常數。
+#define MAX_LED_OUTPUTS 6
 #define MAX_RANGES_PER_PART 4
 #define MAX_TARGETS_PER_EVENT 8
 #define MAX_ROUTE_PARTS 8
