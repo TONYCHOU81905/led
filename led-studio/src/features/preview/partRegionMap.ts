@@ -44,7 +44,9 @@ export const FIGURE_FLOW_ORDER: FigureRegionId[] = [
   'right_hand',
   'right_foot',
   'left_foot',
-  'left_hand'
+  'left_hand',
+  'right_shoe',
+  'left_shoe'
 ]
 
 const OFF_COLOR: ResolvedColor = { r: 28, g: 32, b: 40, visible: false }

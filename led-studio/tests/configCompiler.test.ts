@@ -50,19 +50,20 @@ describe('configCompiler', () => {
     expect(device.device.led_type).toBe('WS2812B')
   })
 
-  it('compiles five wearable outputs with contiguous offsets', () => {
+  it('compiles six wearable outputs with contiguous offsets', () => {
     const role = createRole('dancer_a', '舞者 A')
     const device = compileRoleToDeviceConfig(role, { red: { r: 255, g: 0, b: 0 } }, {
       deviceId: 'wearable', ledType: 'WS2812B'
     })
-    expect(device.device.led_count).toBe(580)
-    expect(device.device.outputs).toHaveLength(5)
+    expect(device.device.led_count).toBe(640)
+    expect(device.device.outputs).toHaveLength(6)
     expect(device.device.outputs?.map(({ gpio, offset, led_count }) => ({ gpio, offset, led_count }))).toEqual([
       { gpio: 4, offset: 0, led_count: 60 },
       { gpio: 5, offset: 60, led_count: 130 },
       { gpio: 6, offset: 190, led_count: 130 },
       { gpio: 7, offset: 320, led_count: 130 },
-      { gpio: 15, offset: 450, led_count: 130 }
+      { gpio: 15, offset: 450, led_count: 130 },
+      { gpio: 16, offset: 580, led_count: 60 }
     ])
   })
 

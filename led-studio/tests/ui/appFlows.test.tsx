@@ -254,19 +254,19 @@ describe('LED Show Studio UI flows (simulated clicks)', () => {
     expect(screen.getByLabelText('音樂播放控制')).toBeInTheDocument()
   })
 
-  it('LED 串聯: 預設 5 通道可分頁編輯', async () => {
+  it('LED 串聯: 預設 6 通道可分頁編輯', async () => {
     const user = userEvent.setup()
     render(<App />)
     await createProjectViaUi(user)
 
     await user.click(sidebarLink('LED 串聯'))
     expect(screen.getByRole('heading', { name: 'LED 輸出與並聯配置' })).toBeInTheDocument()
-    expect(screen.getByText('580')).toBeInTheDocument()
-    expect(screen.getByText('740')).toBeInTheDocument()
+    expect(screen.getByText('640')).toBeInTheDocument()
+    expect(screen.getByText('800')).toBeInTheDocument()
     await user.click(screen.getByRole('tab', { name: /通道 3右腳GPIO 6/ }))
     expect(screen.getByLabelText('每根手指／腳趾燈數')).toHaveValue(10)
     const role = useProjectStore.getState().activeRole()
-    expect(role?.led_outputs).toHaveLength(5)
+    expect(role?.led_outputs).toHaveLength(6)
   })
 
   it('Global toolbar: 儲存專案按鈕各頁可見', async () => {

@@ -132,7 +132,7 @@ describe('removeLedOutput', () => {
   it('只剩一個通道時不允許刪除', () => {
     let p = base()
     const rid = roleOf(p).role_id
-    for (const id of ['right_arm', 'right_leg', 'left_leg', 'left_arm']) {
+    for (const id of ['right_arm', 'right_leg', 'left_leg', 'left_arm', 'shoes']) {
       p = removeLedOutput(p, rid, id)
     }
     expect(roleOf(p).led_outputs).toHaveLength(1)

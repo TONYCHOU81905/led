@@ -45,7 +45,7 @@ describe('projectBundle', () => {
     const summary = projectBundleSummary(project)
     expect(summary.roleCount).toBe(4)
     expect(summary.eventCount).toBe(1)
-    expect(summary.partCount).toBe(5)
+    expect(summary.partCount).toBe(6)
   })
 
   it('joinProjectPath combines project dir and relative segment', () => {
