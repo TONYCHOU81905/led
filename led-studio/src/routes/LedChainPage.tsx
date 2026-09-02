@@ -1,3 +1,4 @@
+import { PREVIEW_PART_OPTIONS } from '../features/preview/partRegionMap'
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
@@ -169,6 +170,18 @@ export function LedChainPage() {
             </select></label>
             <label><span>名稱</span><input value={activeOutput.display_name}
               onChange={(e) => patchOutput({ display_name: e.target.value })} /></label>
+            <label>
+              <span>預覽對應部位</span>
+              <select
+                value={PREVIEW_PART_OPTIONS.some((o) => o.id === activeOutput.part_id) ? activeOutput.part_id : ''}
+                onChange={(e) => patchOutput({ part_id: e.target.value })}
+              >
+                <option value="">（未對應，預覽不顯示）</option>
+                {PREVIEW_PART_OPTIONS.map((opt) => (
+                  <option key={opt.id} value={opt.id}>{opt.label}</option>
+                ))}
+              </select>
+            </label>
             <label><span>{activeOutput.layout === 'ring' ? '帽子燈數' : '肩膀／大腿到分岔點'}</span>
               <input type="number" min={1} max={300} value={activeOutput.outbound_leds}
                 onChange={(e) => patchOutput({ outbound_leds: clampInteger(e.target.value, 1, 300) })} /></label>

@@ -175,8 +175,28 @@ export function updateLedOutput(
     roles: project.roles.map((role) => {
       if (role.role_id !== roleId) return role
       const current = role.led_outputs ?? cloneDefaultLedOutputs()
+      const prev = current.find((output) => output.id === outputId)
       const outputs = current.map((output) => output.id === outputId ? { ...output, ...patch } : output)
-      return { ...role, led_outputs: outputs, parts: partsFromLedOutputs(outputs) }
+
+      // part_id 改變時，把既有 clip 的 targets 一起搬過去。
+      //
+      // parts 是由 partsFromLedOutputs 依 part_id 重算的，若只換 part_id 而不動
+      // events，那條通道上的所有 clip 就會指向一個不存在的 part —— 它們還在
+      // 專案檔裡，但永遠不會被 render，也不會出現在 timeline 的任何一條軌道上。
+      // 這種「資料還在但徹底消失」的狀況比直接報錯難查得多。
+      let events = role.events
+      if (prev && patch.part_id && patch.part_id !== prev.part_id) {
+        const fromPart = prev.part_id
+        const toPart = patch.part_id
+        events = role.events.map((event) => {
+          if (!event.targets.includes(fromPart)) return event
+          // 用 Set 去重：目標 part 可能已經在 targets 裡，換完會變成重複項
+          const targets = [...new Set(event.targets.map((t) => (t === fromPart ? toPart : t)))]
+          return { ...event, targets }
+        })
+      }
+
+      return { ...role, led_outputs: outputs, parts: partsFromLedOutputs(outputs), events }
     })
   })
 }
