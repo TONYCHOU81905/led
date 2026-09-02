@@ -19,9 +19,12 @@ type Point = [number, number]
  * order (index 0 at the root, last index back at the root on the return
  * side).
  *
- * body/left_shoe/right_shoe are not wired to any hardware output today —
- * their coordinates are left as simple placeholders since they are never
- * rendered in practice (see `regionsForParts`).
+ * left_shoe/right_shoe 是第 6 個通道（GPIO 16，ring layout），畫成接在腳踝
+ * 下方的封閉環。腿的路徑刻意收在腳踝（y=113）而不是腳尖 —— 腿與鞋是兩個
+ * 獨立通道，畫面上重疊的話就分不出當下是哪一個在亮。
+ *
+ * body 目前沒有任何通道對應，座標僅為佔位，實際不會被 render
+ * （見 `regionsForParts`）。
  */
 const REGION_STRIPS: Record<FigureRegionId, Point[]> = {
   // 頭：環狀（ring layout）繞頭一圈，起點與終點在同一位置附近。
@@ -77,18 +80,17 @@ const REGION_STRIPS: Record<FigureRegionId, Point[]> = {
     [32, 48],
     [38, 36]
   ],
-  // 右腳：髖部 → 大腿外側 → 腳尖分岔 → 腿內側折回髖部內側
+  // 右腳（褲管）：髖部 → 大腿外側 → 腳踝外側 → 折回腿內側 → 髖部內側。
+  //
+  // 收在腳踝（y=113）而不是腳尖：鞋子是獨立的第 6 通道，兩者若在畫面上重疊，
+  // 就看不出某個時間點是腿在亮還是鞋在亮 —— 預覽的用途正是分辨這件事。
   right_foot: [
     [58, 80],
     [63, 92],
     [65, 104],
-    [64, 114],
-    [62, 119],
-    [65, 123],
-    [68, 125],
-    [61, 126],
-    [58, 121],
-    [56, 114],
+    [64, 113],
+    [57, 113],
+    [56, 108],
     [54, 102],
     [52, 90],
     [50, 80]
@@ -98,25 +100,33 @@ const REGION_STRIPS: Record<FigureRegionId, Point[]> = {
     [42, 80],
     [37, 92],
     [35, 104],
-    [36, 114],
-    [38, 119],
-    [35, 123],
-    [32, 125],
-    [39, 126],
-    [42, 121],
-    [44, 114],
+    [36, 113],
+    [43, 113],
+    [44, 108],
     [46, 102],
     [48, 90],
     [50, 80]
   ],
-  // 鞋（目前硬體未接線，僅保留座標）
-  left_shoe: [
-    [30, 118],
-    [47, 118]
-  ],
+  // 鞋：接在腳踝下方的封閉環（layout 是 ring，燈條繞鞋一圈）。
+  // 用的正是原本被腿佔走的腳掌座標，所以人形的整體輪廓沒有變，
+  // 只是腳掌那塊的歸屬從「腳」換成「鞋」。
   right_shoe: [
-    [53, 118],
-    [70, 118]
+    [57, 116],
+    [63, 116],
+    [66, 121],
+    [68, 125],
+    [60, 126],
+    [56, 122],
+    [57, 116]
+  ],
+  left_shoe: [
+    [43, 116],
+    [37, 116],
+    [34, 121],
+    [32, 125],
+    [40, 126],
+    [44, 122],
+    [43, 116]
   ]
 }
 
@@ -133,8 +143,8 @@ export const REGION_PIXEL_COUNTS: Record<FigureRegionId, number> = {
   right_hand: 26,
   left_foot: 26,
   right_foot: 26,
-  left_shoe: 5,
-  right_shoe: 5
+  left_shoe: 12,
+  right_shoe: 12
 }
 
 /** Evenly sample n points along a polyline by arc length. */
@@ -242,15 +252,29 @@ const SILHOUETTE_BY_REGION: Partial<Record<FigureRegionId, Point[]>> = {
     [54, 80],
     [57.5, 91],
     [59.5, 103],
-    [60, 112],
-    [60, 120]
+    [60, 112]
   ],
   left_foot: [
     [46, 80],
     [42.5, 91],
     [40.5, 103],
-    [40, 112],
-    [40, 120]
+    [40, 112]
+  ],
+  right_shoe: [
+    [57, 116],
+    [63, 116],
+    [67, 123],
+    [60, 126],
+    [56, 122],
+    [57, 116]
+  ],
+  left_shoe: [
+    [43, 116],
+    [37, 116],
+    [33, 123],
+    [40, 126],
+    [44, 122],
+    [43, 116]
   ]
 }
 
@@ -305,7 +329,7 @@ export function DancerFigureSvg({
         {regionsToRender.includes('head') && <ellipse cx="50" cy="15" rx="12" ry="10" />}
         {/* 軀幹：不綁定特定 region，作為連接頭與四肢的結構參考線 */}
         <line x1="50" y1="26" x2="50" y2="79" />
-        {(['right_hand', 'left_hand', 'right_foot', 'left_foot'] as FigureRegionId[]).map((regionId) => {
+        {(['right_hand', 'left_hand', 'right_foot', 'left_foot', 'right_shoe', 'left_shoe'] as FigureRegionId[]).map((regionId) => {
           if (!regionsToRender.includes(regionId)) return null
           const points = SILHOUETTE_BY_REGION[regionId]
           if (!points) return null
