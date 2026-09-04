@@ -281,6 +281,7 @@ app.whenReady().then(() => {
   espStatusListener.setDeviceIpHandler((ip) => {
     registerBridgeTarget(ip)
     syncDiscoveryTargets()
+    timecodeBridge.setUnicastTargets(listBridgeTargets())
   })
   espStatusListener.subscribe(pushEspStatus)
   espStatusListener.onError(pushDiscoveryError)
@@ -498,11 +499,13 @@ app.whenReady().then(() => {
   ipcMain.handle('show:bridgeTargetAdd', async (_event, ip: string) => {
     registerBridgeTarget(ip)
     syncDiscoveryTargets()
+    timecodeBridge.setUnicastTargets(listBridgeTargets())
     return listBridgeTargets()
   })
   ipcMain.handle('show:bridgeTargetRemove', async (_event, ip: string) => {
     const targets = removeBridgeTarget(ip)
     syncDiscoveryTargets()
+    timecodeBridge.setUnicastTargets(listBridgeTargets())
     return targets
   })
 

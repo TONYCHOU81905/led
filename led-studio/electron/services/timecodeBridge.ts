@@ -6,6 +6,11 @@ import {
 } from '../../src/shared/seekThrottle'
 import os from 'node:os'
 import type { BridgeOptions, BridgeState } from '../../src/shared/types/project'
+import {
+  filterBroadcastForTargets,
+  shouldBroadcastThisTick,
+  type InterfaceLike
+} from '../../src/shared/broadcastPolicy'
 
 export const TIMECODE_MAGIC = 0x4c544331 // 'LTC1'
 export const TIMECODE_PORT = 4210
@@ -233,6 +238,17 @@ export class TimecodeBridgeService {
   private externalUpdatedAt = 0
   private lastPauseHeartbeatAt = 0
   private controlRepeatTimers = new Set<NodeJS.Timeout>()
+  /**
+   * 上一次送出 broadcast 的時間（毫秒）。用於降頻控制。
+   * start()/stop() 時重置為 0，表示「還沒送過，下次應該送」。
+   */
+  private lastBroadcastAt = 0
+  /**
+   * 過濾後、實際要送的 broadcast 位址清單。
+   * 包含「子網內有已知板子」的 broadcast 位址（或發現階段的全部 candidates）。
+   * getState() 會回傳這個清單，而非 resolveBroadcastAddresses 的原始結果。
+   */
+  private filteredBroadcastAddresses: string[] = []
 
   private debugLog(message: string): void {
     console.log(`[bridge] ${message}`)
@@ -261,10 +277,36 @@ export class TimecodeBridgeService {
       musicTimeMs: this.musicTimeMs,
       sequence: this.sequence,
       packetsPerSecond: recent.length,
-      broadcastTargets: [...this.broadcastAddresses],
+      broadcastTargets: [...this.filteredBroadcastAddresses],
       unicastTargets: [...this.unicastTargets],
       startedAt: this.startedAt || undefined
     }
+  }
+
+  /**
+   * 在執行中更新 unicast targets。
+   *
+   * 用於演出開始後才被發現的板子。會進行去重、trim、濾掉空字串
+   * （與 start() 同樣的正規化），然後重算 broadcast 位址過濾結果。
+   */
+  setUnicastTargets(targets: string[]): void {
+    this.unicastTargets = [...new Set(targets.map((ip) => ip.trim()).filter(Boolean))]
+    this.updateFilteredBroadcastAddresses()
+    this.emit()
+  }
+
+  /**
+   * 根據 unicastTargets 重新計算過濾後的 broadcast 位址清單。
+   */
+  private updateFilteredBroadcastAddresses(): void {
+    const interfaces = Object.values(os.networkInterfaces()).flatMap(
+      (list) => (list ?? []) as unknown as InterfaceLike[]
+    )
+    this.filteredBroadcastAddresses = filterBroadcastForTargets(
+      this.broadcastAddresses,
+      this.unicastTargets,
+      interfaces
+    )
   }
 
   start(options: BridgeOptions = {}): void {
@@ -276,6 +318,7 @@ export class TimecodeBridgeService {
     this.configCrc32 = options.configCrc32 ?? 0
     this.broadcastAddresses = resolveBroadcastAddresses(options.broadcastAddress)
     this.unicastTargets = [...new Set((options.unicastTargets ?? []).map((ip) => ip.trim()).filter(Boolean))]
+    this.updateFilteredBroadcastAddresses()
     this.port = options.port ?? TIMECODE_PORT
     this.sequence = 0
     this.musicTimeMs = 0
@@ -288,6 +331,7 @@ export class TimecodeBridgeService {
     this.socketReady = false
     this.lastDebugLogAt = 0
     this.lastPauseHeartbeatAt = 0
+    this.lastBroadcastAt = 0
     this.clearControlRepeats()
 
     this.socket = dgram.createSocket('udp4')
@@ -355,6 +399,7 @@ export class TimecodeBridgeService {
     this.socketReady = false
     this.running = false
     this.paused = false
+    this.lastBroadcastAt = 0
     this.debugLog('stopped')
     this.emit()
   }
@@ -487,10 +532,23 @@ export class TimecodeBridgeService {
       configCrc32: this.configCrc32
     })
 
-    for (const address of this.broadcastAddresses) {
-      this.socket.send(packet, this.port, address)
-    }
     const now = Date.now()
+
+    // Broadcast：用過濾後的位址清單，且檢查 shouldBroadcastThisTick。
+    // - 沒有任何 unicast target → true（全速，維持既有發現行為）
+    // - 有 target → 降頻到 DISCOVERY_BROADCAST_HZ（2 Hz）
+    const shouldBroadcast = shouldBroadcastThisTick(
+      this.unicastTargets.length > 0,
+      now,
+      this.lastBroadcastAt
+    )
+    if (shouldBroadcast) {
+      for (const address of this.filteredBroadcastAddresses) {
+        this.socket.send(packet, this.port, address)
+      }
+      this.lastBroadcastAt = now
+    }
+
     this.packetTimestamps.push(now)
     // getState() 只看最近 1 秒，但這個陣列原本永遠不裁切：一場 5 分鐘的秀
     // 會累積十幾萬筆，而且每次 getState() 都要整個 filter 一遍。
@@ -503,7 +561,7 @@ export class TimecodeBridgeService {
     if (isControlPacket || now - this.lastDebugLogAt >= 1000) {
       const typeName = PacketType[type] ?? String(type)
       this.debugLog(
-        `tx ${typeName} seq=${this.sequence} music_ms=${this.musicTimeMs} (${msToMmSs(this.musicTimeMs)}) broadcast=${this.broadcastAddresses.join(', ')} unicast=${this.unicastTargets.join(', ') || '-'}`
+        `tx ${typeName} seq=${this.sequence} music_ms=${this.musicTimeMs} (${msToMmSs(this.musicTimeMs)}) broadcast=${this.filteredBroadcastAddresses.join(', ')} unicast=${this.unicastTargets.join(', ') || '-'}`
       )
       this.lastDebugLogAt = now
     }
