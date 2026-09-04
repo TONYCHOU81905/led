@@ -90,13 +90,20 @@ describe('broadcastPolicy', () => {
     })
 
     it('handles targets on network without corresponding interface', () => {
-      // 已知板子在 10.20.30.40 但沒有對應網卡 → 不應該 crash 也不應該產生位址
+      // 已知板子在 10.20.30.40 但本機沒有對應網卡（UI 明確支援跨子網手動 IP）。
+      //
+      // 這裡原本斷言 toEqual([])，但那是錯的 —— 空清單的後果不是「少送一點」
+      // 而是「完全不送」，呼叫端會因此失去 DISCOVERY_BROADCAST_HZ 的降頻心跳，
+      // 那是「還沒被發現的板子」唯一的後備。這個優化的前提是降頻不是關掉，
+      // 所以過濾不出東西時要退回全部 candidates。
       const candidates = ['192.168.1.255', '10.0.0.255']
       const targets = ['10.20.30.40']
       const interfaces = [iface('192.168.1.10', '255.255.255.0')]
 
       const result = filterBroadcastForTargets(candidates, targets, interfaces)
-      expect(result).toEqual([])
+      expect(result).toEqual(candidates)
+      // 不應該憑空產生任何不在 candidates 裡的位址
+      expect(result.every((ip) => candidates.includes(ip))).toBe(true)
     })
 
     it('ignores internal and non-IPv4 interfaces', () => {
@@ -221,5 +228,45 @@ describe('broadcastPolicy', () => {
         expect(shouldBroadcastThisTick(true, now, lastAt, rateHz)).toBe(false)
       }
     })
+  })
+})
+
+describe('filterBroadcastForTargets：空結果的後備（迴歸測試）', () => {
+  // 這三個測試對應主 session 實測抓到的 bug：過濾結果變空時，呼叫端會失去
+  // DISCOVERY_BROADCAST_HZ 的降頻心跳 —— 而那是「還沒被發現的板子」唯一的
+  // 後備。這個優化的前提是降頻不是關掉，所以寧可多送一個 broadcast。
+  const wifiIface = {
+    address: '192.168.90.69',
+    netmask: '255.255.255.0',
+    internal: false,
+    family: 'IPv4'
+  }
+
+  it('candidates 只有 255.255.255.255 且沒有網卡資訊 → 不能回空', () => {
+    // resolveBroadcastAddresses() 找不到可用網卡時就是回傳這個。
+    const out = filterBroadcastForTargets(['255.255.255.255'], ['192.168.90.107'], [])
+    expect(out).toEqual(['255.255.255.255'])
+  })
+
+  it('target 跨子網（本機沒有對應網卡）→ 不能回空', () => {
+    // UI 明確支援跨子網手動 IP。
+    const out = filterBroadcastForTargets(
+      ['192.168.90.255', '255.255.255.255'],
+      ['10.0.5.20'],
+      [wifiIface]
+    )
+    expect(out.length).toBeGreaterThan(0)
+  })
+
+  it('有對得上的子網時仍然精準過濾（後備不能蓋掉正常行為）', () => {
+    const out = filterBroadcastForTargets(
+      ['192.168.25.255', '192.168.90.255'],
+      ['192.168.90.107'],
+      [
+        { address: '192.168.25.30', netmask: '255.255.255.0', internal: false, family: 'IPv4' },
+        wifiIface
+      ]
+    )
+    expect(out).toEqual(['192.168.90.255'])
   })
 })

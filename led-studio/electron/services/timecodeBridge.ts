@@ -504,12 +504,25 @@ export class TimecodeBridgeService {
     // 先取消還沒送出的舊重送。否則按下暫停後 30ms 內又按播放，排在 40ms 的
     // PAUSE 重送會蓋掉剛送出的 RUNNING，板子就停在那裡不動了。
     this.clearControlRepeats()
-    this.sendPacket(type)
+    // forceBroadcast：控制封包必須豁免 broadcast 的 2Hz 降頻。
+    //
+    // CONTROL_REPEAT 這套重送機制存在的理由就是「RF 會掉包，控制封包一定要
+    // 到」。但降頻的窗口是 500ms，而重送間隔只有 20/40/60ms —— 四發會全部
+    // 落在同一個窗口裡，只有第一發的 broadcast 真的送出去，另外三份被靜默
+    // 丟掉。也就是說專門為了可靠性做的冗餘，在 broadcast 這條路上等於沒有。
+    //
+    // 而「還沒進 unicastTargets 的板子」正是只能靠 broadcast 收控制封包的
+    // 那一群（晚開機的、mDNS 查詢還在飛的、手動加了但還沒 round-trip 的）。
+    // 對它們來說漏掉一顆 STOP 或 PAUSE 就是整台失去同步。
+    //
+    // 控制封包很稀疏（每次使用者操作才幾顆），全速送 broadcast 的成本可以
+    // 忽略；要省的是 100Hz 的心跳，不是這個。
+    this.sendPacket(type, { forceBroadcast: true })
     for (let i = 1; i < CONTROL_REPEAT; i++) {
       const timer = setTimeout(() => {
         this.controlRepeatTimers.delete(timer)
         // socket 可能已經在重送排程期間關掉（sendPacket 自己也會擋）。
-        this.sendPacket(type)
+        this.sendPacket(type, { forceBroadcast: true })
       }, i * CONTROL_REPEAT_GAP_MS)
       this.controlRepeatTimers.add(timer)
     }
@@ -520,7 +533,7 @@ export class TimecodeBridgeService {
     this.controlRepeatTimers.clear()
   }
 
-  private sendPacket(type: PacketType): void {
+  private sendPacket(type: PacketType, options?: { forceBroadcast?: boolean }): void {
     if (!this.socket || !this.socketReady) return
 
     this.sequence += 1
@@ -537,11 +550,9 @@ export class TimecodeBridgeService {
     // Broadcast：用過濾後的位址清單，且檢查 shouldBroadcastThisTick。
     // - 沒有任何 unicast target → true（全速，維持既有發現行為）
     // - 有 target → 降頻到 DISCOVERY_BROADCAST_HZ（2 Hz）
-    const shouldBroadcast = shouldBroadcastThisTick(
-      this.unicastTargets.length > 0,
-      now,
-      this.lastBroadcastAt
-    )
+    const shouldBroadcast =
+      options?.forceBroadcast === true ||
+      shouldBroadcastThisTick(this.unicastTargets.length > 0, now, this.lastBroadcastAt)
     if (shouldBroadcast) {
       for (const address of this.filteredBroadcastAddresses) {
         this.socket.send(packet, this.port, address)

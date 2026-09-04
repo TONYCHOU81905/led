@@ -35,7 +35,10 @@ export function ipv4ToInt(ip: string): number {
   if (parts.length !== 4 || parts.some((part) => Number.isNaN(part) || part < 0 || part > 255)) {
     throw new Error(`Invalid IPv4 address: ${ip}`)
   }
-  return (parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]
+  // >>> 0 轉成無號。功能上目前不必要（所有運算元都經過同一個函式，
+  // ToInt32 一致所以位元相同就比較相等），但 timecodeBridge.ts 裡那份複製
+  // 有加，兩邊不一致會讓下一個讀的人以為其中一邊有 bug。
+  return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0
 }
 
 /**
@@ -100,7 +103,11 @@ export function filterBroadcastForTargets(
           const mask = ipv4ToInt(iface.netmask)
 
           // 驗證：ifaceIp 在這個 mask 下的廣播位址應該與 candidate 相同
-          const expectedBroadcast = (ifaceIp & mask) | (~mask >>> 0)
+          // >>> 0 不可省：ipv4ToInt 回傳無號，而 `&` / `|` 的結果是有號 int32。
+          // 少了它，192.168.90.255 會變成比較「3232258303 !== -1062708993」而
+          // 永遠不相等 —— 過濾結果全空、退回全部 candidates，有線網段的
+          // broadcast 又跑回來，整個優化靜默失效（實測抓到過）。
+          const expectedBroadcast = (((ifaceIp & mask) | (~mask >>> 0)) >>> 0)
           if (expectedBroadcast !== candidateInt) {
             continue // 這個 candidate 不是這張網卡的廣播位址
           }
@@ -109,7 +116,8 @@ export function filterBroadcastForTargets(
           for (const target of targets) {
             try {
               const targetInt = ipv4ToInt(target)
-              if ((targetInt & mask) === (ifaceIp & mask)) {
+              // 同理，兩邊都要 >>> 0 才是同一個數域的比較。
+              if (((targetInt & mask) >>> 0) === ((ifaceIp & mask) >>> 0)) {
                 // 有 target 在這個子網，保留這個 broadcast 位址
                 result.add(candidate)
                 break // 只要找到一個 target 就夠了
@@ -131,6 +139,23 @@ export function filterBroadcastForTargets(
       // Candidate 格式不合法，跳過
       continue
     }
+  }
+
+  // 空結果的後備：一定要留至少一個 broadcast 位址。
+  //
+  // 這一段是必要的，實測有兩個情境會讓上面的過濾結果變成空的：
+  //   1. candidates 只有 255.255.255.255 —— resolveBroadcastAddresses() 在找不到
+  //      任何可用網卡時就是回傳這個（見 timecodeBridge.ts 的 targets.size === 0
+  //      分支），而上面的迴圈會把它跳過。
+  //   2. target 落在本機沒有對應網卡的網段 —— UI 明確支援這種用法
+  //      （「手動 IP 僅在跨子網或掃描不到時使用」）。
+  //
+  // 清單變空的後果不是「少送一點」而是「完全不送」：呼叫端會因此失去
+  // DISCOVERY_BROADCAST_HZ 的降頻心跳，那是給「還沒被發現的板子」的唯一後備
+  // （例如晚開機的第 11 台）。少了它，那些板子永遠收不到 timecode。
+  // 這個優化的前提是「降頻」而不是「關掉」，所以寧可多送一個 broadcast。
+  if (result.size === 0) {
+    return [...candidates]
   }
 
   return [...result]
