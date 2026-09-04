@@ -1,5 +1,19 @@
 #pragma once
 
+/**
+ * LED 總電流上限（mA @5V）。0 = 不啟用。
+ *
+ * 啟用時 FastLED 會動態壓低亮度，保證整條燈的合計電流不超過這個值 ——
+ * 這是唯一能「無論 timeline 怎麼寫都不超過電源能力」的機制；
+ * max_brightness 只縮放亮著的部分，擋不住同時全亮的尖峰。
+ *
+ * 設定值＝電源額定 −(ESP32 自己的尖峰約 500mA)− 餘量。
+ * 例：5V/5A 電源 → -DLED_MAX_MILLIAMPS=4000
+ */
+#ifndef LED_MAX_MILLIAMPS
+#define LED_MAX_MILLIAMPS 0
+#endif
+
 #include <FastLED.h>
 #include "types.h"
 
