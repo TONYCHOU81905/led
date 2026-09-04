@@ -22,6 +22,8 @@ bool ConfigStorage::begin() {
 
 bool ConfigStorage::exists() { return LittleFS.exists(kConfigPath); }
 
+bool ConfigStorage::existsBinary() { return LittleFS.exists(kConfigBinPath); }
+
 bool ConfigStorage::save(const char *json, size_t len) {
   if (!json || len == 0 || len > CONFIG_FLASH_MAX_BYTES) {
     return false;

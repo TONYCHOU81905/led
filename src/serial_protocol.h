@@ -36,6 +36,9 @@ private:
     bool isComplete() const;
   };
 
+  /** 分批上傳中途失敗時從 flash 復原，把舊協定的原子性補回來。 */
+  void rollbackStreamConfig(ConfigLoader &loader, DeviceConfig &cfg, const char *stage);
+
   void handleLine(const String &line, ConfigLoader &config, DeviceConfig &cfg,
                   ClockSync &clock, SyncReceiver &rx, AppSyncState &state);
   void handleJsonCommand(JsonObjectConst root, ConfigLoader &config,
@@ -56,7 +59,7 @@ private:
   void respondBeginMeta(JsonObjectConst root, const DeviceConfig &cfg);
   void respondEndMeta(DeviceConfig &cfg);
   void respondBeginEvents(JsonObjectConst root);
-  void respondEndEvents(DeviceConfig &cfg);
+  void respondEndEvents(ConfigLoader &loader, DeviceConfig &cfg);
   void respondCommitConfig(JsonObjectConst root, ConfigLoader &loader,
                            DeviceConfig &cfg);
   void respondReload(ConfigLoader &loader, DeviceConfig &cfg);
@@ -67,8 +70,7 @@ private:
                           const char *json, size_t len,
                           const uint8_t prev_gpio, const uint16_t prev_led_count,
                           const LedChipsetType prev_led_type,
-                          const char *prev_ssid, const char *prev_pass,
-                          bool in_place = false);
+                          const char *prev_ssid, const char *prev_pass);
 
   SerialPendingAction _pending{};
   ConfigChunkAssembler _chunk{};

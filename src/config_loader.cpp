@@ -71,12 +71,24 @@ bool ConfigLoader::applyDeviceConfig(const DeviceConfig &cfg,
   return true;
 }
 
-bool ConfigLoader::applyDeviceConfigBinary(const DeviceConfig &cfg, DeviceConfig &out) {
-  if (!ConfigStorage::saveBinary(cfg)) {
-    Serial.println("[config] warning: RAM config updated but binary flash save failed");
+bool ConfigLoader::applyDeviceConfigBinary(const DeviceConfig &cfg, DeviceConfig &out,
+                                           bool *flash_saved) {
+  // 回傳 flash 是否真的寫成功，不要吞掉。
+  //
+  // 原本無論 saveBinary() 成敗都 return true，而呼叫端又無條件把
+  // flash_saved 回報成 true —— LittleFS 寫入失敗（空間滿、磨損、IO 錯誤）時
+  // RAM 的設定更新了、Studio 收到 ok:true，但下次重開機板子會安靜地退回
+  // flash 上的舊設定，使用者完全看不到任何錯誤。
+  // 舊的 JSON 路徑（finalizeConfigJson）一直是用 ConfigStorage::exists()
+  // 反映真實狀態，這裡要對齊。
+  const bool saved = ConfigStorage::saveBinary(cfg);
+  if (!saved) {
+    Serial.println("[config] 二進位 flash 寫入失敗：RAM 設定已更新，但重開機後會退回舊設定");
   }
+  if (flash_saved) *flash_saved = saved && ConfigStorage::existsBinary();
+
   _cfg = cfg;
   _loaded = true;
   out = cfg;
-  return true;
+  return saved;
 }

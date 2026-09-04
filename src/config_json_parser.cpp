@@ -433,41 +433,5 @@ bool parse(const char *json, size_t len, DeviceConfig &out) {
   return applyRoot(doc.as<JsonObjectConst>(), out, config_crc);
 }
 
-/**
- * Zero-copy 模式：文件直接指向傳入的緩衝區，就地插入 NUL 當終止符，
- * 所有字串都不再複製。
- *
- * 為什麼需要：實機 `[config] parse error: NoMemory`，Studio 端量到 JSON
- * 43,776 bytes。複製模式下 heap 上會同時有 malloc 的 JSON 原文，加上
- * ArduinoJson 為它建的物件樹（含每個字串的副本）—— 而 WiFi 起來後
- * heap 只剩約 90KB。config 裡幾乎全是字串（effect 名稱、顏色、part id、
- * direction、fade_curve…），省掉這些副本是最大的單筆節省。
- *
- * 兩個使用前提，違反就是 use-after-free 或讀到被改壞的內容：
- *   1. 呼叫端必須擁有可變的緩衝區（不能是 String::c_str()）
- *   2. 緩衝區的生命週期必須長於這次呼叫。目前唯一的呼叫端是分段上傳
- *      （serial_protocol.cpp 的 respondEndConfig），它的 _chunk.buffer 是
- *      malloc 出來的，而 _chunk.reset() 釋放它的時機在 finalizeConfigJson
- *      返回之後 —— 安全。
- *   3. 會就地改寫緩衝區，所以 CRC 必須在呼叫之前算完。目前 respondEndConfig
- *      正是先驗 CRC 才解析。
- */
-bool parseInPlace(char *json, size_t len, DeviceConfig &out) {
-  if (!json || len == 0) {
-    Serial.println("[config] parse error: empty input");
-    return false;
-  }
-
-  // 必須在 deserializeJson 之前算：zero-copy 會就地改寫緩衝區。
-  const uint32_t config_crc = crc32(json, len);
-
-  JsonDocument doc;
-  const DeserializationError err = deserializeJson(doc, json, len);
-  if (err) {
-    Serial.printf("[config] parse error: %s（zero-copy）\n", err.c_str());
-    return false;
-  }
-  return applyRoot(doc.as<JsonObjectConst>(), out, config_crc);
-}
 
 } // namespace ConfigJsonParser

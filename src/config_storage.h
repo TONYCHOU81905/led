@@ -35,6 +35,8 @@ public:
   static bool save(const char *json, size_t len);
   static bool load(String &out);
   static bool exists();
+  /** 二進位 config 檔存在嗎。exists() 只看舊的 JSON 路徑，不能混用。 */
+  static bool existsBinary();
   static bool clear();
   static uint32_t storedCrc32();
 
