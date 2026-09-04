@@ -160,6 +160,100 @@ static void applyNetworkFields(JsonObjectConst root, JsonObjectConst device,
 }
 
 /**
+ * 解析單一 event 物件填進 e。抽出來給 applyRoot() 的 events 迴圈與分批上傳
+ * 協定的 end_events（serial_protocol.cpp）共用 —— 後者收到的是「一個 JSON
+ * 陣列」而不是完整 config，沒有 applyRoot 可用，但 event 本身的解析邏輯
+ * 完全一樣，不該複製兩份。
+ *
+ * colors/parts 的索引查找（findPartIndex/findColorIndex）吃的是 cfg，
+ * 呼叫端必須保證 cfg.parts / cfg.colors 已經套好 —— applyRoot 裡呼叫時
+ * 是這樣（parts/colors 在 events 之前解析），end_events 則要求 Studio
+ * 先送 begin_meta/end_meta 套好 parts/colors 才能送 events。
+ */
+bool applyEvent(JsonObjectConst evt, const DeviceConfig &cfg, TimelineEvent &e) {
+  memset(&e, 0, sizeof(e));
+  e.start_ms = static_cast<uint32_t>(evt["start_ms"] | 0);
+  e.end_ms = static_cast<uint32_t>(evt["end_ms"] | 0);
+
+  JsonArrayConst targets = evt["targets"].as<JsonArrayConst>();
+  if (targets.isNull()) {
+    Serial.println("[config] parse error: event missing targets");
+    return false;
+  }
+  e.target_count = 0;
+  for (JsonVariantConst target : targets) {
+    if (e.target_count >= MAX_TARGETS_PER_EVENT) {
+      Serial.println("[config] parse error: too many targets in event");
+      return false;
+    }
+    const char *target_id = target.as<const char *>();
+    const int part_index = findPartIndex(cfg, target_id);
+    if (part_index < 0) {
+      Serial.printf("[config] parse error: unknown target '%s'\n", target_id ? target_id : "");
+      return false;
+    }
+    e.targets[e.target_count] = static_cast<uint8_t>(part_index);
+    e.target_count++;
+  }
+
+  const char *color_name = evt["color"] | "";
+  const int color_index = findColorIndex(cfg, color_name);
+  if (color_index < 0) {
+    Serial.printf("[config] parse error: unknown color '%s'\n", color_name);
+    return false;
+  }
+  e.color_index = static_cast<uint8_t>(color_index);
+  const char *effect_str = evt["effect"] | "solid";
+  if (!parseEffect(effect_str, e.effect)) {
+    Serial.printf("[config] parse error: unknown effect '%s'\n", effect_str);
+    return false;
+  }
+
+  e.priority = static_cast<uint8_t>(evt["priority"] | 0);
+  e.blink.frequency_hz = evt["params"]["frequency_hz"] | 8.0f;
+  e.blink.duty = evt["params"]["duty"] | 0.5f;
+  const char *secondary_name = evt["params"]["secondary_color"] | "";
+  const int secondary_index = secondary_name[0] != '\0' ? findColorIndex(cfg, secondary_name) : -1;
+  if (secondary_name[0] != '\0' && secondary_index < 0) {
+    Serial.printf("[config] parse error: unknown secondary_color '%s'\n", secondary_name);
+    return false;
+  }
+  e.params.secondary_color_index =
+      secondary_index >= 0 ? static_cast<uint8_t>(secondary_index) : 0xFF;
+  e.params.fade_curve = parseFadeCurve(evt["params"]["fade_curve"] | "ease_in_out");
+  e.params.fade_in_ms = static_cast<uint32_t>(evt["params"]["fade_in_ms"] | 0);
+  e.params.fade_out_ms = static_cast<uint32_t>(evt["params"]["fade_out_ms"] | 0);
+  e.params.speed = evt["params"]["speed"] | 1.0f;
+  e.params.intensity = evt["params"]["intensity"] | 1.0f;
+  e.params.min_intensity = evt["params"]["min_intensity"] | 0.18f;
+  e.params.direction = parseMotionDirection(evt["params"]["direction"] | "auto");
+  e.params.spread = evt["params"]["spread"] | 0.85f;
+  e.params.trail_length = evt["params"]["trail_length"] | 1.2f;
+  e.params.seed = static_cast<uint32_t>(evt["params"]["seed"] | 17);
+  e.params.route_count = 0;
+
+  JsonArrayConst route_parts = evt["params"]["route_parts"].as<JsonArrayConst>();
+  if (!route_parts.isNull()) {
+    for (JsonVariantConst route_part : route_parts) {
+      if (e.params.route_count >= MAX_ROUTE_PARTS) {
+        Serial.println("[config] parse error: too many route_parts in event");
+        return false;
+      }
+      const char *route_part_id = route_part.as<const char *>();
+      const int part_index = findPartIndex(cfg, route_part_id);
+      if (part_index < 0) {
+        Serial.printf("[config] parse error: unknown route_part '%s'\n",
+                      route_part_id ? route_part_id : "");
+        return false;
+      }
+      e.params.route_parts[e.params.route_count] = static_cast<uint8_t>(part_index);
+      e.params.route_count++;
+    }
+  }
+  return true;
+}
+
+/**
  * 兩個入口共用的實作：拿到 root 之後把欄位搬進 DeviceConfig。
  * 抽出來是為了讓 parse()（複製模式）與 parseInPlace()（zero-copy）能共用，
  * 不必把 200 行的搬移邏輯複製兩份。
@@ -304,85 +398,10 @@ static bool applyRoot(JsonObjectConst root, DeviceConfig &out,
       Serial.println("[config] parse error: too many events");
       return false;
     }
-    TimelineEvent &e = out.events[out.event_count++];
-    e.start_ms = static_cast<uint32_t>(evt["start_ms"] | 0);
-    e.end_ms = static_cast<uint32_t>(evt["end_ms"] | 0);
-
-    JsonArrayConst targets = evt["targets"].as<JsonArrayConst>();
-    if (targets.isNull()) {
-      Serial.println("[config] parse error: event missing targets");
+    if (!applyEvent(evt, out, out.events[out.event_count])) {
       return false;
     }
-    e.target_count = 0;
-    for (JsonVariantConst target : targets) {
-      if (e.target_count >= MAX_TARGETS_PER_EVENT) {
-        Serial.println("[config] parse error: too many targets in event");
-        return false;
-      }
-      const char *target_id = target.as<const char *>();
-      const int part_index = findPartIndex(out, target_id);
-      if (part_index < 0) {
-        Serial.printf("[config] parse error: unknown target '%s'\n", target_id ? target_id : "");
-        return false;
-      }
-      e.targets[e.target_count] = static_cast<uint8_t>(part_index);
-      e.target_count++;
-    }
-
-    const char *color_name = evt["color"] | "";
-    const int color_index = findColorIndex(out, color_name);
-    if (color_index < 0) {
-      Serial.printf("[config] parse error: unknown color '%s'\n", color_name);
-      return false;
-    }
-    e.color_index = static_cast<uint8_t>(color_index);
-    const char *effect_str = evt["effect"] | "solid";
-    if (!parseEffect(effect_str, e.effect)) {
-      Serial.printf("[config] parse error: unknown effect '%s'\n", effect_str);
-      return false;
-    }
-
-    e.priority = static_cast<uint8_t>(evt["priority"] | 0);
-    e.blink.frequency_hz = evt["params"]["frequency_hz"] | 8.0f;
-    e.blink.duty = evt["params"]["duty"] | 0.5f;
-    const char *secondary_name = evt["params"]["secondary_color"] | "";
-    const int secondary_index = secondary_name[0] != '\0' ? findColorIndex(out, secondary_name) : -1;
-    if (secondary_name[0] != '\0' && secondary_index < 0) {
-      Serial.printf("[config] parse error: unknown secondary_color '%s'\n", secondary_name);
-      return false;
-    }
-    e.params.secondary_color_index =
-        secondary_index >= 0 ? static_cast<uint8_t>(secondary_index) : 0xFF;
-    e.params.fade_curve = parseFadeCurve(evt["params"]["fade_curve"] | "ease_in_out");
-    e.params.fade_in_ms = static_cast<uint32_t>(evt["params"]["fade_in_ms"] | 0);
-    e.params.fade_out_ms = static_cast<uint32_t>(evt["params"]["fade_out_ms"] | 0);
-    e.params.speed = evt["params"]["speed"] | 1.0f;
-    e.params.intensity = evt["params"]["intensity"] | 1.0f;
-    e.params.min_intensity = evt["params"]["min_intensity"] | 0.18f;
-    e.params.direction = parseMotionDirection(evt["params"]["direction"] | "auto");
-    e.params.spread = evt["params"]["spread"] | 0.85f;
-    e.params.trail_length = evt["params"]["trail_length"] | 1.2f;
-    e.params.seed = static_cast<uint32_t>(evt["params"]["seed"] | 17);
-    e.params.route_count = 0;
-
-    JsonArrayConst route_parts = evt["params"]["route_parts"].as<JsonArrayConst>();
-    if (!route_parts.isNull()) {
-      for (JsonVariantConst route_part : route_parts) {
-        if (e.params.route_count >= MAX_ROUTE_PARTS) {
-          Serial.println("[config] parse error: too many route_parts in event");
-          return false;
-        }
-        const char *route_part_id = route_part.as<const char *>();
-        const int part_index = findPartIndex(out, route_part_id);
-        if (part_index < 0) {
-          Serial.printf("[config] parse error: unknown route_part '%s'\n",
-                        route_part_id ? route_part_id : "");
-          return false;
-        }
-        e.params.route_parts[e.params.route_count] = static_cast<uint8_t>(part_index);
-        e.params.route_count++;
-      }
-    }
+    out.event_count++;
   }
 
   // CRC 由呼叫端在「解析之前」算好傳進來，不能在這裡算。
