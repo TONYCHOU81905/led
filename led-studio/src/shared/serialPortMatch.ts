@@ -86,3 +86,69 @@ export function reselectPortAfterFlash(
 
   return { path: null, matchedBy: 'none' }
 }
+
+export interface WaitForBoardDeps {
+  /** 重新列舉目前的 serial port 清單 */
+  listPorts: () => Promise<PortLike[]>
+  /** 對指定 port 送 ping；板子沒回應要 reject */
+  ping: (path: string) => Promise<unknown>
+  sleep: (ms: number) => Promise<void>
+  /** 每輪嘗試前回報進度，讓使用者知道還在等 */
+  onAttempt?: (attempt: number, path: string) => void
+  /** 總共嘗試幾輪（每輪 = 重新掃描 + 一次 ping） */
+  attempts?: number
+  /** 兩輪之間的間隔 */
+  intervalMs?: number
+}
+
+export interface WaitForBoardResult {
+  /** 確認會回應 ping 的 port；null 代表在時限內始終沒有板子回話 */
+  path: string | null
+  matchedBy: ReselectResult['matchedBy']
+  /** 實際用掉幾輪，寫進紀錄方便判斷是不是每次都很慢 */
+  attemptsUsed: number
+}
+
+/**
+ * 燒錄後等到「真的會回應 ping 的那個 port」。
+ *
+ * 為什麼不能只等固定秒數再重掃 —— 這是踩過的坑：
+ * macOS 在 USB 裝置消失後，還會把 /dev/cu.usbmodemXXXX 這個節點多留一小段
+ * 時間。燒完固定等 2 秒就相信 listPorts() 的結果，抓到的往往是那個**殘留節點**。
+ * 殘留節點 open() 會成功（核心還認得它），所以不會有任何 lock 錯誤，但板子
+ * 其實已經在新節點上 —— 表現為「port 開得起來、30 秒完全沒有輸出」，
+ * 而使用者唯一的解法是拔插 USB。
+ *
+ * 所以判斷「可以 deploy 了」的依據只能是**板子真的回話**，不能是「節點存在」。
+ * 每一輪都重新掃描（不快取清單），因為新節點隨時可能才剛出現。
+ */
+export async function waitForFlashedBoard(
+  previousPath: string,
+  previousSerial: string | undefined,
+  deps: WaitForBoardDeps
+): Promise<WaitForBoardResult> {
+  const attempts = deps.attempts ?? 12
+  const intervalMs = deps.intervalMs ?? 1000
+
+  let lastMatch: ReselectResult = { path: null, matchedBy: 'none' }
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    // 每輪都重新列舉：殘留節點會在這幾秒內消失，新節點會出現。
+    const ports = await deps.listPorts()
+    lastMatch = reselectPortAfterFlash(previousPath, previousSerial, ports)
+
+    if (lastMatch.path) {
+      deps.onAttempt?.(attempt, lastMatch.path)
+      try {
+        await deps.ping(lastMatch.path)
+        return { path: lastMatch.path, matchedBy: lastMatch.matchedBy, attemptsUsed: attempt }
+      } catch {
+        // ping 不通就是還沒好（殘留節點、或板子還在開機）—— 下一輪重掃再試
+      }
+    }
+
+    if (attempt < attempts) await deps.sleep(intervalMs)
+  }
+
+  return { path: null, matchedBy: lastMatch.matchedBy, attemptsUsed: attempts }
+}

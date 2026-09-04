@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   isCandidatePort,
   looksLikeEspPort,
-  reselectPortAfterFlash
+  reselectPortAfterFlash,
+  waitForFlashedBoard
 } from '../src/shared/serialPortMatch'
 
 describe('looksLikeEspPort', () => {
@@ -98,5 +99,103 @@ describe('reselectPortAfterFlash', () => {
       path: null,
       matchedBy: 'none'
     })
+  })
+})
+
+describe('waitForFlashedBoard', () => {
+  const noSleep = () => Promise.resolve()
+
+  it('板子一開始就會回話時只跑一輪', async () => {
+    const result = await waitForFlashedBoard(
+      '/dev/tty.usbmodem1201',
+      'AB12',
+      {
+        listPorts: async () => [{ path: '/dev/tty.usbmodem1201', serialNumber: 'AB12' }],
+        ping: async () => ({ ok: true }),
+        sleep: noSleep
+      }
+    )
+    expect(result).toEqual({
+      path: '/dev/tty.usbmodem1201',
+      matchedBy: 'serialNumber',
+      attemptsUsed: 1
+    })
+  })
+
+  it('殘留節點（開得起來但不回話）會被跳過，等到新節點才算成功', async () => {
+    // 這是造成「deploy 時 30 秒 ping timeout」的真實情境：
+    // macOS 還留著舊節點，open() 成功但板子已經在新節點上。
+    const stale = { path: '/dev/tty.usbmodem1201', serialNumber: 'AB12' }
+    const fresh = { path: '/dev/tty.usbmodem1101', serialNumber: 'AB12' }
+    let round = 0
+    const pinged: string[] = []
+
+    const result = await waitForFlashedBoard('/dev/tty.usbmodem1201', 'AB12', {
+      // 前兩輪只看到殘留節點，第三輪才換成新節點
+      listPorts: async () => (++round < 3 ? [stale] : [fresh]),
+      ping: async (path) => {
+        pinged.push(path)
+        if (path === stale.path) throw new Error('Serial command timeout')
+        return { ok: true }
+      },
+      sleep: noSleep
+    })
+
+    expect(result.path).toBe('/dev/tty.usbmodem1101')
+    expect(result.attemptsUsed).toBe(3)
+    // 每輪都要重新掃描，不能快取第一輪的清單
+    expect(pinged).toEqual([stale.path, stale.path, fresh.path])
+  })
+
+  it('板子始終不回話時回 null，讓 UI 能叫使用者拔插 USB', async () => {
+    const result = await waitForFlashedBoard('/dev/tty.usbmodem1201', 'AB12', {
+      listPorts: async () => [{ path: '/dev/tty.usbmodem1201', serialNumber: 'AB12' }],
+      ping: async () => {
+        throw new Error('Serial command timeout')
+      },
+      sleep: noSleep,
+      attempts: 3
+    })
+    expect(result).toEqual({ path: null, matchedBy: 'serialNumber', attemptsUsed: 3 })
+  })
+
+  it('清單一直是空的時候也要收斂成 null，不能卡住', async () => {
+    const result = await waitForFlashedBoard('/dev/tty.usbmodem1201', 'AB12', {
+      listPorts: async () => [],
+      ping: async () => ({ ok: true }),
+      sleep: noSleep,
+      attempts: 2
+    })
+    expect(result.path).toBeNull()
+    expect(result.matchedBy).toBe('none')
+  })
+
+  it('清單空時不該去 ping（沒有 path 可 ping）', async () => {
+    let pingCalls = 0
+    await waitForFlashedBoard('/dev/tty.usbmodem1201', undefined, {
+      listPorts: async () => [],
+      ping: async () => {
+        pingCalls++
+        return {}
+      },
+      sleep: noSleep,
+      attempts: 3
+    })
+    expect(pingCalls).toBe(0)
+  })
+
+  it('最後一輪失敗後不再多等一次 sleep', async () => {
+    let sleeps = 0
+    await waitForFlashedBoard('/dev/tty.usbmodem1201', 'AB12', {
+      listPorts: async () => [{ path: '/dev/tty.usbmodem1201', serialNumber: 'AB12' }],
+      ping: async () => {
+        throw new Error('nope')
+      },
+      sleep: async () => {
+        sleeps++
+      },
+      attempts: 3
+    })
+    expect(sleeps).toBe(2)
   })
 })

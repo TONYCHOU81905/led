@@ -20,6 +20,7 @@ import {
   isCandidatePort,
   looksLikeEspPort,
   reselectPortAfterFlash,
+  waitForFlashedBoard,
   type PortLike
 } from '../shared/serialPortMatch'
 import type { DeviceConfig } from '../shared/types/project'
@@ -46,12 +47,6 @@ function buildConfigFromProject(
     network: { ssid, password, timecode_port: 4210, device_status_port: 4211 }
   })
 }
-
-/**
- * 燒錄後等板子把 USB 重新列舉完的時間。
- * ESP32-S3 原生 USB-Serial/JTAG 實測約 1～1.5 秒，取 2 秒留餘裕。
- */
-const PORT_REENUMERATE_WAIT_MS = 2000
 
 export function DeviceManagerPage() {
   const { project, activeRoleId } = useProjectStore()
@@ -471,26 +466,41 @@ export function DeviceManagerPage() {
 
               await window.api.device.flashFirmware(previousPath, flashBoardId, (p) => appendLog(p.message))
 
-              // esptool 的 --after hard_reset 讓板子重開，原生 USB-Serial/JTAG
-              // 會整個重新列舉，要 1～2 秒節點才會回來。等一下再重掃。
-              appendLog('等待板子重新列舉 USB…')
-              await new Promise((resolve) => setTimeout(resolve, PORT_REENUMERATE_WAIT_MS))
-              const list = await refreshPorts()
+              // 「節點存在」不能當成板子好了 —— macOS 會把已消失的
+              // /dev/cu.usbmodemXXXX 多留一小段時間，那個殘留節點 open() 會
+              // 成功卻永遠收不到任何輸出（表現為 deploy 時 30 秒 ping timeout）。
+              // 唯一可靠的判準是板子真的回應 ping。
+              appendLog('等待板子重新列舉 USB，並確認會回應 ping…')
+              const { path, matchedBy, attemptsUsed } = await waitForFlashedBoard(
+                previousPath,
+                previousSerial,
+                {
+                  listPorts: () => window.api.device.listPorts(),
+                  ping: (p) => window.api.device.ping(p),
+                  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+                  onAttempt: (attempt, p) => appendLog(`  第 ${attempt} 次確認 ${p}…`)
+                }
+              )
+              await refreshPorts()
 
-              const { path, matchedBy } = reselectPortAfterFlash(previousPath, previousSerial, list)
               if (!path) {
-                appendLog('⚠ 燒錄成功，但重掃後找不到板子的 port。請確認 USB 線沒鬆脫，然後按「重新掃描」。')
+                appendLog(
+                  '⚠ 燒錄成功，但板子在時限內都沒有回應 ping。' +
+                    '原生 USB 的板子在 hard_reset 後偶爾不會回到應用模式 —— ' +
+                    '請把 USB 拔掉重插（不需要重燒），然後按「重新掃描」再 deploy。'
+                )
                 return
               }
 
               setManualPort('')
               setSelectedPort(path)
+              const suffix = `板子已回應 ping（第 ${attemptsUsed} 次確認），可以直接 deploy。`
               if (path === previousPath) {
-                appendLog(`燒錄完成，port 未變（${path}），可以直接 deploy。`)
+                appendLog(`燒錄完成，port 未變（${path}）。${suffix}`)
               } else {
                 appendLog(
-                  `燒錄完成。板子重新列舉後 port 從 ${previousPath} 變成 ${path}（依 ${matchedBy} 對回），` +
-                    '已自動改選，可以直接 deploy。'
+                  `燒錄完成。板子重新列舉後 port 從 ${previousPath} 變成 ${path}` +
+                    `（依 ${matchedBy} 對回），已自動改選。${suffix}`
                 )
               }
             })
