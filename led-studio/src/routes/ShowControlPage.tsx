@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { MusicTransportPanel } from '../features/show/MusicTransportPanel'
+import { deviceDisplayName, deviceKey } from '../shared/deviceIdentity'
 import { mergeShowDevices } from '../shared/showDeviceRegistry'
-import type { EspDeviceStatus } from '../shared/types/project'
+import type { EspDeviceStatus, MdnsDevice } from '../shared/types/project'
 import { formatMsToTime } from '../shared/timeParse'
 import { useShowStore } from '../stores/showStore'
 
@@ -19,6 +20,8 @@ export function ShowControlPage() {
   const [manualTarget, setManualTarget] = useState('')
   const [knownTargets, setKnownTargets] = useState<string[]>([])
   const [scanning, setScanning] = useState(false)
+  const [mdnsDevices, setMdnsDevices] = useState<MdnsDevice[]>([])
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null)
 
   const runDiscovery = async () => {
     if (!window.api?.show.discoverDevices) return
@@ -40,12 +43,21 @@ export function ShowControlPage() {
       setDevices(list)
       refreshTargets()
     })
+    // mDNS 找到板子後，main process 會自動把 IP 註冊成 unicast target，
+    // 所以這裡訂閱只是為了顯示；裝置清單本身會透過 onEspStatus 自己更新。
+    const unsubMdns = window.api.show.onMdnsDevices((list) => {
+      setMdnsDevices(list)
+      refreshTargets()
+    })
+    const unsubDiscoveryError = window.api.show.onDiscoveryError(setDiscoveryError)
     void window.api.show.espStatusList().then(setDevices)
     refreshTargets()
     void runDiscovery()
     return () => {
       unsubBridge()
       unsubEsp()
+      unsubMdns()
+      unsubDiscoveryError()
     }
   }, [setBridge])
 
@@ -145,15 +157,55 @@ export function ShowControlPage() {
         </Link>
       </div>
 
+      {discoveryError ? (
+        <p className="hint discovery-error" role="alert">
+          ⚠ {discoveryError}
+        </p>
+      ) : null}
+
       <section className="esp-status-panel">
         <h2>演出裝置狀態</h2>
         <p className="hint">
-          進入此頁會自動掃描同 Wi-Fi 子網的 ESP（UDP 4211 hello）。發現後會自動註冊 Unicast，無需手動輸入 IP。
-          手動 IP 僅在跨子網或掃描不到時使用。狀態與 USB 有線無關。
+          進入此頁會用兩條管道同時找裝置：<strong>mDNS</strong>（Bonjour，逐一網卡送查詢）與
+          <strong> UDP 4211 廣播＋子網 unicast 掃描</strong>。任一條找到就會自動註冊 Unicast，無需手動輸入 IP。
+          手動 IP 僅在跨子網或兩條都掃不到時使用。狀態與 USB 有線無關。
         </p>
+        {mdnsDevices.length > 0 ? (
+          <details className="mdns-panel">
+            <summary>mDNS 掃到 {mdnsDevices.length} 台</summary>
+            <table className="event-table">
+              <thead>
+                <tr>
+                  <th>device_id</th>
+                  <th>hostname</th>
+                  <th>IP</th>
+                  <th>role</th>
+                  <th>韌體</th>
+                  <th title="從哪張網卡發現的。有線與 Wi-Fi 都接著時，看這欄可以確認板子在哪個網段">
+                    來源網卡
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {mdnsDevices.map((d) => (
+                  <tr key={deviceKey(d.device_id, d.chip_id, d.ip)}>
+                    <td>{deviceDisplayName(d.device_id, d.chip_id)}</td>
+                    <td>{d.host}</td>
+                    <td>{d.ip}</td>
+                    <td>{d.role_id ?? '—'}</td>
+                    <td>{d.firmware ?? '—'}</td>
+                    <td>{d.via_interface}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </details>
+        ) : null}
         {showDevices.length === 0 ? (
           <p className="hint">
-            {scanning ? '正在掃描子網…' : '尚無裝置。確認 ESP 已連 Wi-Fi，或按「掃描裝置」。'}
+            {scanning
+              ? '正在掃描（mDNS ＋ 子網 unicast）…'
+              : '尚無裝置。確認 ESP 已連 Wi-Fi，或按「掃描裝置」。板子的 serial log 會印出 [mdns] 那一行，可用來確認註冊成功。'}
           </p>
         ) : (
           <table className="event-table">
@@ -174,7 +226,7 @@ export function ShowControlPage() {
               {showDevices.map((d) => (
                 <tr key={d.ip}>
                   <td>{d.ip}</td>
-                  <td>{d.device_id ?? '—'}</td>
+                  <td>{d.device_id ? deviceDisplayName(d.device_id, d.chip_id) : '—'}</td>
                   <td>{d.registered ? '是' : '—'}</td>
                   <td>
                     {d.udpReporting === null ? '未回報' : d.udpReporting ? 'online' : 'offline'}

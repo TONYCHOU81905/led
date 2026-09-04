@@ -5,7 +5,8 @@ import type {
   DeviceConfig,
   EspDeviceStatus,
   LedProject,
-  LedStudioApi
+  LedStudioApi,
+  MdnsDevice
 } from '../src/shared/types/project'
 import type { FlashBoardId } from '../src/shared/boardTargets'
 
@@ -70,7 +71,19 @@ const api: LedStudioApi = {
       return () => ipcRenderer.removeListener('show:espStatus', handler)
     },
     espStatusList: () => ipcRenderer.invoke('show:espStatusList') as Promise<EspDeviceStatus[]>,
-    discoverDevices: () => ipcRenderer.invoke('show:discoverDevices') as Promise<void>
+    discoverDevices: () => ipcRenderer.invoke('show:discoverDevices') as Promise<void>,
+    mdnsDeviceList: () => ipcRenderer.invoke('show:mdnsDeviceList') as Promise<MdnsDevice[]>,
+    onMdnsDevices: (cb) => {
+      const handler = (_event: Electron.IpcRendererEvent, devices: MdnsDevice[]) => cb(devices)
+      ipcRenderer.on('show:mdnsDevices', handler)
+      void ipcRenderer.invoke('show:mdnsDeviceList').then(cb)
+      return () => ipcRenderer.removeListener('show:mdnsDevices', handler)
+    },
+    onDiscoveryError: (cb) => {
+      const handler = (_event: Electron.IpcRendererEvent, message: string) => cb(message)
+      ipcRenderer.on('show:discoveryError', handler)
+      return () => ipcRenderer.removeListener('show:discoveryError', handler)
+    }
   },
   device: {
     listPorts: () => ipcRenderer.invoke('device:listPorts'),

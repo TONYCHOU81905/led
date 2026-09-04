@@ -7,6 +7,7 @@ import { mediaContentType, parseRangeHeader } from './services/mediaRange'
 import { Readable } from 'node:stream'
 import { buildFirmware, checkFirmwareBuildAvailability, flashFirmware } from './services/flasher'
 import { espStatusListener, type EspDeviceStatus } from './services/espStatusListener'
+import { mdnsDiscovery, type MdnsDevice } from './services/mdnsDiscovery'
 import { ltcSidecar } from './services/ltcSidecar'
 import {
   getEspStatus,
@@ -85,7 +86,22 @@ async function withMonitorPaused<T>(fn: () => Promise<T>): Promise<T> {
     return await fn()
   } finally {
     if (pausedPath) {
-      await resumeMonitor(pausedPath)
+      // resumeMonitor 必須包起來：從 finally 裡 throw 會把外層指令「已經成功」
+      // 的結果覆蓋成錯誤。燒錄剛結束時板子正在 USB 重新列舉，這一開幾乎必然
+      // 失敗 —— 以前的表現就是「燒錄其實成功了，但 app 報錯」。
+      try {
+        await resumeMonitor(pausedPath)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.warn('[monitor] 指令結束後恢復監看失敗（不影響指令結果）:', msg)
+        for (const win of BrowserWindow.getAllWindows()) {
+          win.webContents.send('device:monitorLine', {
+            kind: 'error',
+            text: `恢復監看失敗：${msg}（板子可能剛重開機、port 名稱已改變，請按「重新掃描」）`,
+            at: Date.now()
+          })
+        }
+      }
     }
   }
 }
@@ -126,6 +142,19 @@ function listBridgeTargets(): string[] {
 
 function syncDiscoveryTargets(): void {
   espStatusListener.setDiscoveryTargets(listBridgeTargets())
+}
+
+function pushMdnsDevices(list: MdnsDevice[]): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send('show:mdnsDevices', list)
+  }
+}
+
+/** mDNS 與 UDP 廣播兩條發現管道共用同一個錯誤頻道，UI 只要訂一個。 */
+function pushDiscoveryError(message: string): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send('show:discoveryError', message)
+  }
 }
 
 function pushBridgeState(): void {
@@ -250,7 +279,24 @@ app.whenReady().then(() => {
     syncDiscoveryTargets()
   })
   espStatusListener.subscribe(pushEspStatus)
+  espStatusListener.onError(pushDiscoveryError)
   espStatusListener.start(4211)
+
+  // mDNS 是獨立的第二條發現管道。找到板子後把 IP 註冊成 unicast target，
+  // 既有的 status 流程（UDP 4211 hello → status）就會自動接上，
+  // 不必再靠 broadcast 能不能穿過網段。
+  mdnsDiscovery.subscribe((list) => {
+    let changed = false
+    for (const device of list) {
+      const before = knownBridgeTargets.size
+      registerBridgeTarget(device.ip)
+      if (knownBridgeTargets.size !== before) changed = true
+    }
+    if (changed) syncDiscoveryTargets()
+    pushMdnsDevices(list)
+  })
+  mdnsDiscovery.onError(pushDiscoveryError)
+  mdnsDiscovery.start()
 
   ltcSidecar.subscribe((ms) => {
     timecodeBridge.setExternalTimeMs(ms)
@@ -448,8 +494,13 @@ app.whenReady().then(() => {
   ipcMain.handle('show:espStatusList', async () => espStatusListener.listDevices())
 
   ipcMain.handle('show:discoverDevices', async () => {
+    // 兩條管道一起掃：mDNS 立刻重發查詢（不受預設路由影響），
+    // UDP 廣播＋網段 unicast 掃描照舊，兩者互為後備。
+    mdnsDiscovery.query()
     await espStatusListener.discoverDevices()
   })
+
+  ipcMain.handle('show:mdnsDeviceList', async () => mdnsDiscovery.listDevices())
 
   ipcMain.handle('show:ltcStart', async (_event, options?: { wavPath?: string; durationMs?: number }) => {
     ltcSidecar.start({ wavPath: options?.wavPath, simulate: !options?.wavPath, durationMs: options?.durationMs })
@@ -544,6 +595,7 @@ app.on('window-all-closed', () => {
   ltcSidecar.stop()
   timecodeBridge.stop()
   espStatusListener.stop()
+  mdnsDiscovery.stop()
   void stopMonitor()
   if (process.platform !== 'darwin') {
     app.quit()
