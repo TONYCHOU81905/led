@@ -268,6 +268,16 @@ void SerialProtocol::respondEndConfig(ConfigLoader &loader, DeviceConfig &cfg) {
   strncpy(prev_pass, cfg.network.password, sizeof(prev_pass) - 1);
   prev_pass[sizeof(prev_pass) - 1] = '\0';
 
+  // 解析前先印出 JSON 大小與 heap 狀態。
+  //
+  // 為什麼需要：ArduinoJson 7 的 JsonDocument 是彈性的，從 heap 動態配置，
+  // 而且成長時要 realloc（短暫需要兩倍空間）。解析失敗時只會回一句
+  // 「parse error: NoMemory」，完全看不出是 JSON 太大、heap 被吃光、
+  // 還是碎片化導致沒有足夠大的連續區塊 —— 三者的處理方式完全不同。
+  // 最大連續區塊是關鍵：free heap 夠但最大區塊不夠時 NoMemory 一樣會發生。
+  Serial.printf("[config] 解析前：JSON %u bytes，free heap %u，最大連續區塊 %u\n",
+                _chunk.total, ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+
   const bool ok = finalizeConfigJson(loader, cfg, _chunk.buffer, _chunk.total,
                                      prev_gpio, prev_led_count, prev_led_type,
                                      prev_ssid, prev_pass);
