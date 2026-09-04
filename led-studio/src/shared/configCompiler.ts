@@ -200,10 +200,98 @@ export function compileProjectRole(
  * envelope. Escaping all non-ASCII code units keeps byte length, offsets, and CRC
  * aligned with what the ESP receives over serial.
  */
+/**
+ * 韌體 config_json_parser.cpp 實際會讀的 event 欄位。
+ *
+ * 用白名單而非黑名單：日後在 UI 端加新的授權用欄位時，不會又靜默地把
+ * 傳輸體積撐大 —— 沒列進來的東西一律不會被送到板子。
+ *
+ * 已確認韌體「不讀」而原本會被送出去的：
+ *   id                 —— evt 從來不讀（config_json_parser.cpp 只在 outputs 與
+ *                         parts 讀 ["id"]，events 迴圈沒有）
+ *   note               —— 純授權註記
+ *   route_step_labels / route_label / route_preset / route_group_id /
+ *   route_group_label / route_group_index / route_group_total /
+ *   route_step_label   —— 全是 UI 的路徑標籤
+ */
+const FIRMWARE_EVENT_KEYS = [
+  'start_ms',
+  'end_ms',
+  'targets',
+  'color',
+  'effect',
+  'priority',
+  'params'
+] as const
+
+/** 韌體 params 區塊實際會讀的欄位（route_parts 有讀，route_* 的標籤都不讀）。 */
+const FIRMWARE_PARAM_KEYS = [
+  'secondary_color',
+  'fade_curve',
+  'fade_in_ms',
+  'fade_out_ms',
+  'speed',
+  'intensity',
+  'min_intensity',
+  'direction',
+  'route_parts',
+  'spread',
+  'trail_length',
+  'frequency_hz',
+  'duty',
+  'seed'
+] as const
+
+function pick(source: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const key of keys) {
+    if (source[key] !== undefined) out[key] = source[key]
+  }
+  return out
+}
+
+/**
+ * 把 events 裁剩韌體真的會讀的欄位。
+ *
+ * 為什麼必須做：實機遇到 `[config] parse error: NoMemory`，Studio 端量到
+ * JSON 有 43,776 bytes / 152 個 event = 每個 event 288 bytes。解析瞬間 heap
+ * 上同時有 malloc 出來的 43.8KB JSON 原文，加上 ArduinoJson 7 為它建的物件樹
+ * （小物件多時可達 3～5 倍），而 WiFi 起來後 heap 只剩約 90KB —— 差好幾倍。
+ *
+ * 體積主要來自 UI 的路徑標籤：serializeConfigForTransport 會把非 ASCII 轉成
+ * \uXXXX，所以每個中文字佔 6 bytes。像
+ * route_group_label: "頭 → 右手 → 右腳 → 左腳 → 左手" 一個欄位就近百 bytes，
+ * 而韌體從來不讀它。
+ *
+ * 裁掉同時省下兩筆：JSON 位元組數，以及 ArduinoJson 的 key/字串物件數 ——
+ * 後者才是 NoMemory 的主因。
+ */
+export function stripConfigForTransport(config: DeviceConfig): Record<string, unknown> {
+  const raw = config as unknown as Record<string, unknown>
+  const events = Array.isArray(raw.events) ? (raw.events as Record<string, unknown>[]) : []
+
+  return {
+    ...raw,
+    events: events.map((evt) => {
+      const slim = pick(evt, FIRMWARE_EVENT_KEYS)
+      if (evt.params && typeof evt.params === 'object') {
+        const params = pick(evt.params as Record<string, unknown>, FIRMWARE_PARAM_KEYS)
+        // params 全被裁空時整個欄位不要送，省掉一個空物件
+        if (Object.keys(params).length > 0) slim.params = params
+        else delete slim.params
+      }
+      return slim
+    })
+  }
+}
+
 export function serializeConfigForTransport(config: DeviceConfig): string {
-  return JSON.stringify(config).replace(/[\u0080-\uffff]/g, (char) => {
-    return `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`
-  })
+  // 裁剪放在這裡（而不是呼叫端）是刻意的：configChecksum() 也走這個函式，
+  // 所以 Studio 算的 CRC 與板子收到的位元組永遠是同一份，不會對不上。
+  return JSON.stringify(stripConfigForTransport(config)).replace(
+    /[\u0080-\uffff]/g,
+    (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`
+  )
 }
 
 /** Simple CRC32 for config checksum (IEEE polynomial). */

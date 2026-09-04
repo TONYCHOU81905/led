@@ -56,7 +56,8 @@ private:
                           const char *json, size_t len,
                           const uint8_t prev_gpio, const uint16_t prev_led_count,
                           const LedChipsetType prev_led_type,
-                          const char *prev_ssid, const char *prev_pass);
+                          const char *prev_ssid, const char *prev_pass,
+                          bool in_place = false);
 
   SerialPendingAction _pending{};
   ConfigChunkAssembler _chunk{};

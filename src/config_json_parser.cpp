@@ -159,20 +159,13 @@ static void applyNetworkFields(JsonObjectConst root, JsonObjectConst device,
   }
 }
 
-bool parse(const char *json, size_t len, DeviceConfig &out) {
-  if (!json || len == 0) {
-    Serial.println("[config] parse error: empty input");
-    return false;
-  }
-
-  JsonDocument doc;
-  const DeserializationError err = deserializeJson(doc, json, len);
-  if (err) {
-    Serial.printf("[config] parse error: %s\n", err.c_str());
-    return false;
-  }
-
-  JsonObjectConst root = doc.as<JsonObjectConst>();
+/**
+ * 兩個入口共用的實作：拿到 root 之後把欄位搬進 DeviceConfig。
+ * 抽出來是為了讓 parse()（複製模式）與 parseInPlace()（zero-copy）能共用，
+ * 不必把 200 行的搬移邏輯複製兩份。
+ */
+static bool applyRoot(JsonObjectConst root, DeviceConfig &out,
+                      const uint32_t config_crc) {
   if (root.isNull()) {
     Serial.println("[config] parse error: root must be object");
     return false;
@@ -392,8 +385,70 @@ bool parse(const char *json, size_t len, DeviceConfig &out) {
     }
   }
 
-  out.config_crc32 = crc32(json, len);
+  // CRC 由呼叫端在「解析之前」算好傳進來，不能在這裡算。
+  // parseInPlace 走 zero-copy 會就地把分隔符改成 NUL，解析後再算就是錯的值 ——
+  // 那會讓板子回報錯誤的 config_crc32，Studio 端的比對永遠 mismatch。
+  out.config_crc32 = config_crc;
   return true;
+}
+
+/**
+ * 複製模式：ArduinoJson 會把每個字串複製一份進文件。
+ * 給來源是 Arduino String（flash 載入、單發 config 指令）的呼叫端用 ——
+ * 那些緩衝區不能就地修改。
+ */
+bool parse(const char *json, size_t len, DeviceConfig &out) {
+  if (!json || len == 0) {
+    Serial.println("[config] parse error: empty input");
+    return false;
+  }
+
+  const uint32_t config_crc = crc32(json, len);
+
+  JsonDocument doc;
+  const DeserializationError err = deserializeJson(doc, json, len);
+  if (err) {
+    Serial.printf("[config] parse error: %s\n", err.c_str());
+    return false;
+  }
+  return applyRoot(doc.as<JsonObjectConst>(), out, config_crc);
+}
+
+/**
+ * Zero-copy 模式：文件直接指向傳入的緩衝區，就地插入 NUL 當終止符，
+ * 所有字串都不再複製。
+ *
+ * 為什麼需要：實機 `[config] parse error: NoMemory`，Studio 端量到 JSON
+ * 43,776 bytes。複製模式下 heap 上會同時有 malloc 的 JSON 原文，加上
+ * ArduinoJson 為它建的物件樹（含每個字串的副本）—— 而 WiFi 起來後
+ * heap 只剩約 90KB。config 裡幾乎全是字串（effect 名稱、顏色、part id、
+ * direction、fade_curve…），省掉這些副本是最大的單筆節省。
+ *
+ * 兩個使用前提，違反就是 use-after-free 或讀到被改壞的內容：
+ *   1. 呼叫端必須擁有可變的緩衝區（不能是 String::c_str()）
+ *   2. 緩衝區的生命週期必須長於這次呼叫。目前唯一的呼叫端是分段上傳
+ *      （serial_protocol.cpp 的 respondEndConfig），它的 _chunk.buffer 是
+ *      malloc 出來的，而 _chunk.reset() 釋放它的時機在 finalizeConfigJson
+ *      返回之後 —— 安全。
+ *   3. 會就地改寫緩衝區，所以 CRC 必須在呼叫之前算完。目前 respondEndConfig
+ *      正是先驗 CRC 才解析。
+ */
+bool parseInPlace(char *json, size_t len, DeviceConfig &out) {
+  if (!json || len == 0) {
+    Serial.println("[config] parse error: empty input");
+    return false;
+  }
+
+  // 必須在 deserializeJson 之前算：zero-copy 會就地改寫緩衝區。
+  const uint32_t config_crc = crc32(json, len);
+
+  JsonDocument doc;
+  const DeserializationError err = deserializeJson(doc, json, len);
+  if (err) {
+    Serial.printf("[config] parse error: %s（zero-copy）\n", err.c_str());
+    return false;
+  }
+  return applyRoot(doc.as<JsonObjectConst>(), out, config_crc);
 }
 
 } // namespace ConfigJsonParser
