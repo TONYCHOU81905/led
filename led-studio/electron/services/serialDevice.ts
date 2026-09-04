@@ -273,6 +273,15 @@ export async function uploadEspConfig(
   const checksum = crc32(json)
   const totalChunks = Math.ceil(json.length / CHUNK_SIZE)
 
+  // 一律記錄大小，不要只在失敗時才印。
+  //
+  // 板子回「parse error: NoMemory」時（ArduinoJson 的 heap 不足），第一個要問
+  // 的就是「JSON 到底多大」—— 但原本這個數字只出現在 begin_config 階段的
+  // 錯誤訊息裡，失敗在 end_config 的話就完全看不到。
+  console.log(
+    `[device] 上傳 config：${json.length} bytes / ${totalChunks} 個 chunk（每個 ${CHUNK_SIZE} bytes）`
+  )
+
   // 四個階段共用同一個 "Serial command timeout" 會完全看不出卡在哪 ——
   // ping 不通、begin 不回、傳到一半斷、還是最後套用失敗，排查方向完全不同。
   const labelled = async <R>(stage: string, run: () => Promise<R>): Promise<R> => {
