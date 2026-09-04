@@ -1,4 +1,9 @@
 import dgram from 'node:dgram'
+import {
+  decideSeekPacket,
+  initialSeekThrottleState,
+  type SeekThrottleState
+} from '../../src/shared/seekThrottle'
 import os from 'node:os'
 import type { BridgeOptions, BridgeState } from '../../src/shared/types/project'
 
@@ -215,6 +220,12 @@ export class TimecodeBridgeService {
   private configCrc32 = 0
   private broadcastAddresses = ['255.255.255.255']
   private unicastTargets: string[] = []
+  /**
+   * SEEK 封包的節流狀態。拖動時間軸時 seek() 會被每個拖曳事件呼叫
+   * （實測約 21 Hz），每顆 SEEK 都讓韌體 applyHardSeek 重新錨定時鐘。
+   * 內部時間仍然每次都更新，只有封包送出受節流。
+   */
+  private seekThrottle: SeekThrottleState = initialSeekThrottleState()
   private port = TIMECODE_PORT
   private packetTimestamps: number[] = []
   private listeners = new Set<(state: BridgeState) => void>()
@@ -257,6 +268,7 @@ export class TimecodeBridgeService {
   }
 
   start(options: BridgeOptions = {}): void {
+    this.resetSeekThrottle()
     if (this.running) return
 
     this.source = options.source ?? 'manual'
@@ -326,6 +338,7 @@ export class TimecodeBridgeService {
   }
 
   stop(): void {
+    this.resetSeekThrottle()
     if (!this.running) return
 
     // STOP 之後 socket 就要關掉，沒辦法用延遲重送；改成連續送幾份。
@@ -380,15 +393,30 @@ export class TimecodeBridgeService {
       this.externalTimeMs = this.musicTimeMs
       this.externalUpdatedAt = Date.now()
     }
-    this.sendControlPacket(PacketType.SEEK)
+    // 內部時間已經在上面更新完（永遠精確）；這裡只決定要不要送封包。
+    // 拖曳過程中被省略的那些，會由下一顆心跳（播放 100 Hz RUNNING、
+    // 暫停 5 Hz PAUSE）帶著相同的 music_time 補上 —— 兩者的韌體 handler
+    // 都會 applyHardSeek，所以預覽仍然跟得上。
+    const decision = decideSeekPacket(this.musicTimeMs, Date.now(), this.seekThrottle)
+    if (decision.send) {
+      this.seekThrottle = decision.next
+      this.sendControlPacket(PacketType.SEEK)
+    }
     if (this.paused) {
       // 暫停中 seek：緊接著補一顆 PAUSE，板子才會明確停在新位置，不必等
       // 下一次心跳。（韌體的 SEEK 已不再隱含「開始播放」。）
       this.lastPauseHeartbeatAt = Date.now()
       this.sendPacket(PacketType.PAUSE)
     }
-    this.debugLog(`seek to music_ms=${this.musicTimeMs} (${msToMmSs(this.musicTimeMs)})`)
+    if (decision.send) {
+      this.debugLog(`seek to music_ms=${this.musicTimeMs} (${msToMmSs(this.musicTimeMs)})`)
+    }
     this.emit()
+  }
+
+  /** 開始／停止時重置，避免跨場次拿舊的 music_time 比對位移。 */
+  private resetSeekThrottle(): void {
+    this.seekThrottle = initialSeekThrottleState()
   }
 
   private tick(): void {
