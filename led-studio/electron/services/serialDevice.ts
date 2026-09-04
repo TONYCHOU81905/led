@@ -1,4 +1,5 @@
 import { crc32, serializeConfigForTransport } from '../../src/shared/configCompiler'
+import { planConfigUpload, shouldFallbackToLegacyUpload } from '../../src/shared/configUploadPlan'
 import type { DeviceConfig } from '../../src/shared/types/project'
 
 export interface SerialPortInfo {
@@ -256,34 +257,23 @@ export async function setEspWifi(path: string, ssid: string, password: string): 
   return sendJsonCommand<{ ok: boolean }>(path, { cmd: 'wifi', ssid, password })
 }
 
-export async function uploadEspConfig(
+/**
+ * 用舊協定（SINGLE_CONFIG_LIMIT 時代）上傳完整 config。
+ *
+ * 韌體仍然支援 begin_config / config_chunk / end_config，用於向後相容。
+ */
+async function uploadEspConfigLegacy(
   path: string,
   config: Record<string, unknown>
 ): Promise<EspConfigUploadResult> {
   const json = serializeConfigForTransport(config as unknown as DeviceConfig)
-
-  // Ensure ESP is answering before starting multi-chunk transfer (WiFi join must not block Serial).
-  await waitForEspReady(path)
-  await new Promise((r) => setTimeout(r, SETTLE_AFTER_WIFI_MS))
-
-  if (json.length <= SINGLE_CONFIG_LIMIT) {
-    return sendJsonCommand<EspConfigUploadResult>(path, { cmd: 'config', config })
-  }
-
   const checksum = crc32(json)
   const totalChunks = Math.ceil(json.length / CHUNK_SIZE)
 
-  // 一律記錄大小，不要只在失敗時才印。
-  //
-  // 板子回「parse error: NoMemory」時（ArduinoJson 的 heap 不足），第一個要問
-  // 的就是「JSON 到底多大」—— 但原本這個數字只出現在 begin_config 階段的
-  // 錯誤訊息裡，失敗在 end_config 的話就完全看不到。
   console.log(
-    `[device] 上傳 config：${json.length} bytes / ${totalChunks} 個 chunk（每個 ${CHUNK_SIZE} bytes）`
+    `[device] 上傳 config（舊協定）：${json.length} bytes / ${totalChunks} 個 chunk（每個 ${CHUNK_SIZE} bytes）`
   )
 
-  // 四個階段共用同一個 "Serial command timeout" 會完全看不出卡在哪 ——
-  // ping 不通、begin 不回、傳到一半斷、還是最後套用失敗，排查方向完全不同。
   const labelled = async <R>(stage: string, run: () => Promise<R>): Promise<R> => {
     try {
       return await run()
@@ -312,6 +302,138 @@ export async function uploadEspConfig(
       send<EspConfigUploadResult>({ cmd: 'end_config' })
     )
   })
+}
+
+/**
+ * 用新協定（批量上傳）上傳 config。
+ *
+ * 流程：
+ * 1. meta（除 events 外全部，events 為 []）
+ * 2. 每 EVENTS_PER_BATCH 個 event 一批
+ * 3. 最後 commit，確認 config 完整性
+ *
+ * 這個方法讓板子的 peak 記憶體與批次大小成正比，而不是與 config 總量成正比。
+ */
+async function uploadEspConfigBatched(
+  path: string,
+  config: Record<string, unknown>
+): Promise<EspConfigUploadResult> {
+  const deviceConfig = config as unknown as DeviceConfig
+  const plan = planConfigUpload(deviceConfig)
+
+  const metaTotalChunks = Math.ceil(plan.metaJson.length / CHUNK_SIZE)
+  const totalEventChunks = plan.batches.reduce(
+    (sum, batch) => sum + Math.ceil(batch.length / CHUNK_SIZE),
+    0
+  )
+  const totalChunks = metaTotalChunks + totalEventChunks + plan.batches.length
+
+  console.log(
+    `[device] 上傳 config（批量）：meta ${plan.metaJson.length} bytes ` +
+    `+ ${plan.totalEvents} 個 event / ${plan.batches.length} 批 ` +
+    `= 約 ${plan.metaJson.length + plan.batches.reduce((s, b) => s + b.length, 0)} bytes ` +
+    `/ ${totalChunks} 個 chunk`
+  )
+
+  const labelled = async <R>(stage: string, run: () => Promise<R>): Promise<R> => {
+    try {
+      return await run()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      throw new Error(`上傳 Config 失敗（${stage}）：${msg}`)
+    }
+  }
+
+  return withOpenPort(path, async (_port, _parser, send) => {
+    // 1. 上傳 meta
+    const metaCrc = crc32(plan.metaJson)
+    await labelled('begin_meta', () =>
+      send({ cmd: 'begin_meta', size: plan.metaJson.length, crc32: metaCrc })
+    )
+
+    let metaChunks = 0
+    for (let offset = 0; offset < plan.metaJson.length; offset += CHUNK_SIZE) {
+      const data = plan.metaJson.slice(offset, offset + CHUNK_SIZE)
+      metaChunks += 1
+      await labelled(`傳送 meta chunk ${metaChunks}/${metaTotalChunks}`, () =>
+        send({ cmd: 'config_chunk', offset, data })
+      )
+    }
+
+    await labelled('end_meta', () => send({ cmd: 'end_meta' }))
+
+    // 2. 上傳每一批 events
+    for (let batchIdx = 0; batchIdx < plan.batches.length; batchIdx++) {
+      const batchJson = plan.batches[batchIdx]
+      const batchCrc = crc32(batchJson)
+
+      await labelled(`begin_events batch ${batchIdx + 1}/${plan.batches.length}`, () =>
+        send({
+          cmd: 'begin_events',
+          size: batchJson.length,
+          crc32: batchCrc,
+          batch: batchIdx
+        })
+      )
+
+      let chunkIdx = 0
+      for (let offset = 0; offset < batchJson.length; offset += CHUNK_SIZE) {
+        const data = batchJson.slice(offset, offset + CHUNK_SIZE)
+        chunkIdx += 1
+        await labelled(`傳送 events batch ${batchIdx + 1} chunk ${chunkIdx}`, () =>
+          send({ cmd: 'config_chunk', offset, data })
+        )
+      }
+
+      await labelled(`end_events batch ${batchIdx + 1}/${plan.batches.length}`, () =>
+        send({ cmd: 'end_events' })
+      )
+    }
+
+    // 3. commit —— 確認 config 完整性並寫進 flash
+    return labelled('commit_config', () =>
+      send<EspConfigUploadResult>({
+        cmd: 'commit_config',
+        event_count: plan.totalEvents,
+        config_crc32: plan.configCrc32
+      })
+    )
+  })
+}
+
+export async function uploadEspConfig(
+  path: string,
+  config: Record<string, unknown>
+): Promise<EspConfigUploadResult> {
+  // Ensure ESP is answering before starting multi-chunk transfer (WiFi join must not block Serial).
+  await waitForEspReady(path)
+  await new Promise((r) => setTimeout(r, SETTLE_AFTER_WIFI_MS))
+
+  if ((config as any).schema_version === undefined) {
+    // 如果不是 DeviceConfig 結構（例如舊版的直接 JSON），用舊邏輯
+    return uploadEspConfigLegacy(path, config)
+  }
+
+  // 嘗試新協定（批量上傳）
+  try {
+    return await uploadEspConfigBatched(path, config)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+
+    // 如果是 begin_meta 階段失敗，可以退回舊協定
+    if (msg.includes('begin_meta') && shouldFallbackToLegacyUpload('begin_meta')) {
+      console.log('[device] 批量上傳 begin_meta 失敗，退回舊協定...')
+      try {
+        return await uploadEspConfigLegacy(path, config)
+      } catch (legacyErr) {
+        const legacyMsg = legacyErr instanceof Error ? legacyErr.message : String(legacyErr)
+        throw new Error(`舊協定也失敗：${legacyMsg}`)
+      }
+    }
+
+    // events 批次或 commit 失敗就不要退回 —— 板子狀態已經被部分修改
+    throw err
+  }
 }
 
 export async function getEspStatus(path: string): Promise<Record<string, unknown>> {
