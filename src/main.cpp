@@ -56,6 +56,21 @@ static const char *resetReasonName(esp_reset_reason_t reason) {
   }
 }
 
+/**
+ * WiFi 初始化前的電源穩定延遲。
+ *
+ * 實測拿到過 Reset reason: brownout (9)，發生在 WiFi.mode(WIFI_STA) 的 RF
+ * 校正尖峰上（ESP32-S3 約 350～500mA）。當時板子透過 Type-C AV 轉接器供電，
+ * USB 樹顯示 Current Available 500mA / Required 500mA —— 餘裕為零。
+ * 改成直插之後同一份韌體 3 分鐘浸泡完全穩定，所以根因是供電而非軟體。
+ *
+ * 這段延遲讓大電容在尖峰之前充飽，買的是餘裕不是根治。成本只有開機慢 0.3 秒。
+ * 供電很緊時可用 -DWIFI_POWER_SETTLE_MS=1000 加大。
+ */
+#ifndef WIFI_POWER_SETTLE_MS
+#define WIFI_POWER_SETTLE_MS 300
+#endif
+
 #ifndef TIMECODE_HOLD_MS
 #define TIMECODE_HOLD_MS 500
 #endif
@@ -230,10 +245,15 @@ void setup() {
   // 開機流程單筆最大的配置。這行必須印在 g_wifi.connect() 之前 ——
   // 之前板子在「self-test done 之後、[wifi] begin connect 之前」重開機，
   // 中間完全沒有任何輸出，無從判斷是不是 heap 不夠。
-  // 這塊板子靜態 RAM 就用掉 67%，餘裕本來就不多。
+  // 實測 pre-WiFi heap 有 153KB、最大連續區塊 126KB，所以 heap 從來不是瓶頸
+  // （先前「RAM 67% 所以餘裕不多」是拿靜態連結數字推 heap 的錯誤推論）。
+  // 這行留著是為了下次開機失敗時不必再猜。
   Serial.printf("[app] pre-WiFi heap=%u（最大連續區塊=%u），LED 總數=%u\n",
                 ESP.getFreeHeap(), ESP.getMaxAllocHeap(),
                 g_config.hardware.led_count);
+
+  // self-test 剛結束、WiFi 的 RF 校正尖峰即將到來 —— 中間讓電源穩定下來。
+  delay(WIFI_POWER_SETTLE_MS);
 
   if (!g_wifi.connect(g_config.network)) {
     Serial.println("[app] WiFi failed — continuing offline for debug");
