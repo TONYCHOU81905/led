@@ -27,6 +27,7 @@ import {
   stopMonitor,
   type SerialMonitorLine
 } from './services/serialMonitor'
+import { shouldSkipSubnetSweep } from '../src/shared/discoveryPolicy'
 import { timecodeBridge } from './services/timecodeBridge'
 import { loadOrBuildWaveformCache } from './services/waveformCache'
 import { resolveAppResource } from './utils/paths'
@@ -514,8 +515,11 @@ app.whenReady().then(() => {
   ipcMain.handle('show:discoverDevices', async () => {
     // 兩條管道一起掃：mDNS 立刻重發查詢（不受預設路由影響），
     // UDP 廣播＋網段 unicast 掃描照舊，兩者互為後備。
+    // 但演出進行中要跳過 unicast 掃描以避免 ARP 廣播干擾 timecode。
+    const showRunning = timecodeBridge.getState().running
     mdnsDiscovery.query()
-    await espStatusListener.discoverDevices()
+    await espStatusListener.discoverDevices({ skipSubnetSweep: shouldSkipSubnetSweep(showRunning) })
+    return { skippedSubnetSweep: showRunning }
   })
 
   ipcMain.handle('show:mdnsDeviceList', async () => mdnsDiscovery.listDevices())
