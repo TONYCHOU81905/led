@@ -71,7 +71,7 @@ const api: LedStudioApi = {
       return () => ipcRenderer.removeListener('show:espStatus', handler)
     },
     espStatusList: () => ipcRenderer.invoke('show:espStatusList') as Promise<EspDeviceStatus[]>,
-    discoverDevices: () => ipcRenderer.invoke('show:discoverDevices') as Promise<void>,
+    discoverDevices: () => ipcRenderer.invoke('show:discoverDevices') as Promise<{ skippedSubnetSweep: boolean }>,
     mdnsDeviceList: () => ipcRenderer.invoke('show:mdnsDeviceList') as Promise<MdnsDevice[]>,
     onMdnsDevices: (cb) => {
       const handler = (_event: Electron.IpcRendererEvent, devices: MdnsDevice[]) => cb(devices)

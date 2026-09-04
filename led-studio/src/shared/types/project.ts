@@ -321,7 +321,7 @@ export interface LedStudioApi {
     onBridgeState(cb: (state: BridgeState) => void): () => void
     onEspStatus(cb: (devices: EspDeviceStatus[]) => void): () => void
     espStatusList(): Promise<EspDeviceStatus[]>
-    discoverDevices(): Promise<void>
+    discoverDevices(): Promise<{ skippedSubnetSweep: boolean }>
     mdnsDeviceList(): Promise<MdnsDevice[]>
     onMdnsDevices(cb: (devices: MdnsDevice[]) => void): () => void
     /** mDNS 與 UDP 廣播兩條發現管道共用的錯誤回報（bind 失敗、權限被拒…） */
