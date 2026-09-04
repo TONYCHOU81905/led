@@ -16,13 +16,20 @@ import {
   type FlashBoardId
 } from '../shared/boardTargets'
 import { defaultCompileOptions } from '../shared/deviceConfigDefaults'
+import {
+  isCandidatePort,
+  looksLikeEspPort,
+  reselectPortAfterFlash,
+  type PortLike
+} from '../shared/serialPortMatch'
 import type { DeviceConfig } from '../shared/types/project'
 import { useProjectStore } from '../stores/projectStore'
 
-interface PortInfo {
-  path: string
-  manufacturer?: string
-}
+/**
+ * 沿用 serialPortMatch 的 PortLike，不要在這裡重新宣告一份。
+ * 以前這裡少了 serialNumber，燒錄後就無法用它把 port 對回同一塊板子。
+ */
+type PortInfo = PortLike
 
 function buildConfigFromProject(
   project: NonNullable<ReturnType<typeof useProjectStore.getState>['project']>,
@@ -39,6 +46,12 @@ function buildConfigFromProject(
     network: { ssid, password, timecode_port: 4210, device_status_port: 4211 }
   })
 }
+
+/**
+ * 燒錄後等板子把 USB 重新列舉完的時間。
+ * ESP32-S3 原生 USB-Serial/JTAG 實測約 1～1.5 秒，取 2 秒留餘裕。
+ */
+const PORT_REENUMERATE_WAIT_MS = 2000
 
 export function DeviceManagerPage() {
   const { project, activeRoleId } = useProjectStore()
@@ -93,33 +106,25 @@ export function DeviceManagerPage() {
   const refreshPorts = useCallback(async () => {
     if (!window.api?.device) {
       setPortError('請用 Electron App 開啟（npm run dev），瀏覽器無法存取 USB Serial')
-      return
+      return [] as PortInfo[]
     }
     setPortError(null)
     try {
       const list = await window.api.device.listPorts()
       setPorts(list)
-      const isEspPort = (p: PortInfo) =>
-        !p.path.includes('debug-console') &&
-        !p.path.includes('wlan-debug') &&
-        !p.path.includes('Bluetooth')
-      const espPort = list.find(
-        (p) =>
-          isEspPort(p) &&
-          (p.manufacturer?.toLowerCase().includes('espressif') ||
-            p.path.includes('usbserial') ||
-            p.path.includes('wchusbserial'))
-      )
+      const espPort = list.find(looksLikeEspPort)
       if (espPort && !selectedPort && !manualPort.trim()) {
         setSelectedPort(espPort.path)
-      } else if (list.find(isEspPort) && !selectedPort && !manualPort.trim()) {
-        setSelectedPort(list.find(isEspPort)!.path)
+      } else if (list.find(isCandidatePort) && !selectedPort && !manualPort.trim()) {
+        setSelectedPort(list.find(isCandidatePort)!.path)
       }
       if (list.length === 0) {
         setPortError('未偵測到 Serial Port。請接上 ESP32 USB，或在下方手動輸入埠名（如 /dev/cu.usbserial-xxx）')
       }
+      return list
     } catch (err) {
       setPortError(err instanceof Error ? err.message : String(err))
+      return []
     }
   }, [selectedPort, manualPort])
 
@@ -459,7 +464,35 @@ export function DeviceManagerPage() {
           disabled={busy || !effectivePort}
           onClick={() =>
             run('Flash firmware', async () => {
-              await window.api.device.flashFirmware(effectivePort, flashBoardId, (p) => appendLog(p.message))
+              // 記住燒錄前的 serialNumber：板子重開機後 /dev/cu.usbmodemXXXX
+              // 的編號可能變，只有 serialNumber 是穩定的識別。
+              const previousPath = effectivePort
+              const previousSerial = ports.find((p) => p.path === previousPath)?.serialNumber
+
+              await window.api.device.flashFirmware(previousPath, flashBoardId, (p) => appendLog(p.message))
+
+              // esptool 的 --after hard_reset 讓板子重開，原生 USB-Serial/JTAG
+              // 會整個重新列舉，要 1～2 秒節點才會回來。等一下再重掃。
+              appendLog('等待板子重新列舉 USB…')
+              await new Promise((resolve) => setTimeout(resolve, PORT_REENUMERATE_WAIT_MS))
+              const list = await refreshPorts()
+
+              const { path, matchedBy } = reselectPortAfterFlash(previousPath, previousSerial, list)
+              if (!path) {
+                appendLog('⚠ 燒錄成功，但重掃後找不到板子的 port。請確認 USB 線沒鬆脫，然後按「重新掃描」。')
+                return
+              }
+
+              setManualPort('')
+              setSelectedPort(path)
+              if (path === previousPath) {
+                appendLog(`燒錄完成，port 未變（${path}），可以直接 deploy。`)
+              } else {
+                appendLog(
+                  `燒錄完成。板子重新列舉後 port 從 ${previousPath} 變成 ${path}（依 ${matchedBy} 對回），` +
+                    '已自動改選，可以直接 deploy。'
+                )
+              }
             })
           }
         >

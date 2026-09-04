@@ -13,6 +13,8 @@ export function isValidBridgeTargetIp(ip: string): boolean {
 export interface ShowDeviceRow {
   ip: string
   device_id?: string
+  /** MAC 後 3 bytes。十台同 role 的板子 device_id 一樣，要靠這個在畫面上分辨。 */
+  chip_id?: string
   /** Listed in Show Control / Device Manager unicast targets */
   registered: boolean
   /** null = never received UDP status from this IP */
@@ -48,6 +50,7 @@ export function mergeShowDevices(
     rows.set(ip, {
       ip,
       device_id: device.device_id,
+      chip_id: device.chip_id,
       registered: existing?.registered ?? false,
       udpReporting,
       sync_state: device.sync_state,

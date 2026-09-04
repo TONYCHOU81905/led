@@ -27,6 +27,7 @@
   },
   "dependencies": {
     "@serialport/parser-readline": "^13.0.0",
+    "bonjour-service": "^1.4.4",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-router-dom": "^7.6.3",

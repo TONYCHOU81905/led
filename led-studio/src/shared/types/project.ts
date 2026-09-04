@@ -238,6 +238,8 @@ export interface BridgeState {
 
 export interface EspDeviceStatus {
   device_id: string
+  /** 韌體帶的 MAC 後 3 bytes。同 role 的多台板子 device_id 相同，靠這個區分。 */
+  chip_id?: string
   ip?: string
   online?: boolean
   role_id?: string
@@ -247,6 +249,24 @@ export interface EspDeviceStatus {
   rssi?: number
   battery_mv?: number
   config_crc32?: string | number
+  last_seen_ms: number
+}
+
+/**
+ * mDNS 掃到的裝置。IP 是從 mDNS 回應的 A record 直接取的，
+ * 不經過 OS 的 .local 解析 —— 這樣 macOS 與 Windows 行為一致。
+ */
+export interface MdnsDevice {
+  device_id: string
+  /** 韌體 TXT 帶的 MAC 後 3 bytes。同 role 的多台板子 device_id 相同，靠這個區分。 */
+  chip_id?: string
+  host: string
+  ip: string
+  port: number
+  role_id?: string
+  firmware?: string
+  /** 從哪張網卡發現的，排查「有線＋Wi-Fi 雙網卡」問題時用得到 */
+  via_interface: string
   last_seen_ms: number
 }
 
@@ -302,6 +322,10 @@ export interface LedStudioApi {
     onEspStatus(cb: (devices: EspDeviceStatus[]) => void): () => void
     espStatusList(): Promise<EspDeviceStatus[]>
     discoverDevices(): Promise<void>
+    mdnsDeviceList(): Promise<MdnsDevice[]>
+    onMdnsDevices(cb: (devices: MdnsDevice[]) => void): () => void
+    /** mDNS 與 UDP 廣播兩條發現管道共用的錯誤回報（bind 失敗、權限被拒…） */
+    onDiscoveryError(cb: (message: string) => void): () => void
   }
   device: {
     listPorts(): Promise<Array<{ path: string; manufacturer?: string }>>
