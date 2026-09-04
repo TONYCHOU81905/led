@@ -7,6 +7,7 @@ import { mediaContentType, parseRangeHeader } from './services/mediaRange'
 import { Readable } from 'node:stream'
 import { buildFirmware, checkFirmwareBuildAvailability, flashFirmware } from './services/flasher'
 import { espStatusListener, type EspDeviceStatus } from './services/espStatusListener'
+import { describeDiscoveryMismatch } from './services/discoveryDiagnosis'
 import { mdnsDiscovery, type MdnsDevice } from './services/mdnsDiscovery'
 import { ltcSidecar } from './services/ltcSidecar'
 import {
@@ -105,6 +106,9 @@ async function withMonitorPaused<T>(fn: () => Promise<T>): Promise<T> {
     }
   }
 }
+
+/** 兩條發現管道都跑完第一輪所需的時間（UDP 的子網 unicast 掃描要幾秒） */
+const DISCOVERY_DIAGNOSIS_DELAY_MS = 25000
 
 const knownBridgeTargets = new Set<string>()
 
@@ -297,6 +301,17 @@ app.whenReady().then(() => {
   })
   mdnsDiscovery.onError(pushDiscoveryError)
   mdnsDiscovery.start()
+
+  // 兩條管道的結果不一致時把判斷講出來。等 25 秒是為了讓兩邊都有機會完成
+  // 第一輪（UDP 的子網 unicast 掃描本身就要幾秒），而且只報一次不要洗訊息。
+  setTimeout(() => {
+    const message = describeDiscoveryMismatch({
+      mdns: mdnsDiscovery.listDevices().length,
+      udp: espStatusListener.listDevices().filter((d) => d.online !== false).length,
+      mdnsStarted: mdnsDiscovery.isRunning()
+    })
+    if (message) pushDiscoveryError(message)
+  }, DISCOVERY_DIAGNOSIS_DELAY_MS)
 
   ltcSidecar.subscribe((ms) => {
     timecodeBridge.setExternalTimeMs(ms)

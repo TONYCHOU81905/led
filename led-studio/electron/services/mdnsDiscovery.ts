@@ -174,6 +174,11 @@ export class MdnsDiscovery {
     return () => this.errorListeners.delete(listener)
   }
 
+  /** 有沒有任何一張網卡的 mDNS instance 成功啟動（診斷用） */
+  isRunning(): boolean {
+    return this.instances.length > 0
+  }
+
   listDevices(): MdnsDevice[] {
     // 同 device_id 的多台板子要有穩定順序，否則畫面每次更新都在跳動。
     return [...this.devices.values()].sort((a, b) =>
