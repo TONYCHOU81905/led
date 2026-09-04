@@ -1,6 +1,7 @@
 #include "status_reporter.h"
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include "mdns_advertiser.h"
 
 #ifndef BATTERY_ADC_PIN
 #define BATTERY_ADC_PIN -1
@@ -118,16 +119,22 @@ void StatusReporter::tick(uint32_t now_ms, const DeviceConfig &cfg,
   if (now_ms - _last_send_ms < interval) return;
   _last_send_ms = now_ms;
 
+  // chip_id（MAC 後 3 bytes）讓 Studio 能區分「device_id 相同但實體不同」的
+  // 多台板子。device_id 是從 role_id 推導的，同 role 的十台會完全一樣。
+  char chip[8];
+  mdns_advertiser::chipSuffix(chip, sizeof(chip));
+
   char buf[512];
   const int n = snprintf(
       buf, sizeof(buf),
-      "{\"type\":\"status\",\"device_id\":\"%s\",\"role_id\":\"%s\","
+      "{\"type\":\"status\",\"device_id\":\"%s\",\"chip_id\":\"%s\","
+      "\"role_id\":\"%s\","
       "\"firmware_version\":\"%s\",\"config_crc32\":\"0x%08X\","
       "\"sync_state\":\"%s\",\"last_timecode_seq\":%u,"
       "\"music_time_ms\":%u,"
       "\"estimated_drift_ms\":%d,\"packet_loss_count\":%u,"
       "\"rssi\":%d,\"battery_mv\":%u}\n",
-      cfg.device_id, cfg.role_id, FIRMWARE_VERSION, cfg.config_crc32,
+      cfg.device_id, chip, cfg.role_id, FIRMWARE_VERSION, cfg.config_crc32,
       stateName(state), clock.lastSequence(),
       clock.hasSync() ? clock.musicTimeMs(esp_timer_get_time()) : 0,
       clock.estimatedDriftMs(),

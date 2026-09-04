@@ -104,7 +104,10 @@ export function createMockApi(): MockApi {
         return () => undefined
       }),
       espStatusList: vi.fn(async () => []),
-      discoverDevices: vi.fn(async () => undefined)
+      discoverDevices: vi.fn(async () => undefined),
+      mdnsDeviceList: vi.fn(async () => []),
+      onMdnsDevices: vi.fn(() => () => undefined),
+      onDiscoveryError: vi.fn(() => () => undefined)
     },
     device: {
       listPorts: vi.fn(async () => [{ path: '/dev/cu.usbserial-mock', manufacturer: 'Espressif' }]),

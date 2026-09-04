@@ -11,6 +11,7 @@
 #include "time_format.h"
 #include "local_trigger.h"
 #include "local_sync_peer.h"
+#include "mdns_advertiser.h"
 
 static DeviceConfig g_config;
 static ConfigLoader g_config_loader;
@@ -87,6 +88,9 @@ static const char *stateName(AppSyncState state) {
 static void startNetworkServices() {
   g_sync_rx.begin(g_config.network.timecode_port);
   g_status.begin(g_config.network.status_port);
+  // mDNS 必須在拿到 IP 之後才註冊（紀錄裡帶的就是當前 IP）。
+  // 這個函式是 boot 與每次重連的共同入口，放這裡就不會漏。
+  mdns_advertiser::start(g_config);
   g_state = STATE_WAIT_TIMECODE;
   g_wifi_was_connected = true;
   Serial.printf("[app] waiting for timecode on UDP %u\n",
@@ -285,6 +289,8 @@ void loop() {
     if (g_wifi_was_connected) {
       g_wifi_was_connected = false;
       g_state = STATE_WIFI_CONNECTING;
+      // 不停掉的話，紀錄會停留在舊 IP，Studio 掃到後連過去是死的。
+      mdns_advertiser::stop();
       Serial.println("[wifi] disconnected; will retry");
     }
     if (now_ms - g_last_wifi_retry_ms >= WIFI_RETRY_INTERVAL_MS) {

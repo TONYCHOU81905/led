@@ -196,10 +196,36 @@ export async function pauseMonitor(): Promise<string | null> {
   return path
 }
 
-/** 恢復先前暫停的監看，沿用暫停前記住的 onLine callback。 */
+/**
+ * 恢復先前暫停的監看，沿用暫停前記住的 onLine callback。
+ *
+ * 為什麼要重試：燒錄用 esptool 的 --after hard_reset 收尾，板子重開機時
+ * ESP32-S3 的原生 USB-Serial/JTAG 會整個重新列舉（re-enumerate），
+ * /dev/cu.usbmodemXXXX 這個節點會先消失再出現，要 1～2 秒。
+ * 指令一結束就立刻重開必然拿到 ENOENT 或 "Resource temporarily unavailable"。
+ */
+const RESUME_ATTEMPTS = 4
+const RESUME_RETRY_MS = 1000
+
 export async function resumeMonitor(path: string): Promise<void> {
   if (!lastOnLine) {
     throw new Error('resumeMonitor: 沒有可恢復的監看 session（尚未呼叫過 startMonitor）')
   }
-  await startMonitor(path, lastOnLine)
+
+  let lastError: Error | undefined
+  for (let attempt = 1; attempt <= RESUME_ATTEMPTS; attempt++) {
+    try {
+      await startMonitor(path, lastOnLine)
+      return
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err))
+      if (attempt < RESUME_ATTEMPTS) {
+        await new Promise((resolve) => setTimeout(resolve, RESUME_RETRY_MS))
+      }
+    }
+  }
+
+  throw new Error(
+    `恢復監看 ${path} 失敗（已重試 ${RESUME_ATTEMPTS} 次）：${lastError?.message ?? '未知原因'}`
+  )
 }
