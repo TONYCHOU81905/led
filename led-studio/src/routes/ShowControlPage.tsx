@@ -22,12 +22,18 @@ export function ShowControlPage() {
   const [scanning, setScanning] = useState(false)
   const [mdnsDevices, setMdnsDevices] = useState<MdnsDevice[]>([])
   const [discoveryError, setDiscoveryError] = useState<string | null>(null)
+  const [skippedSubnetSweep, setSkippedSubnetSweep] = useState(false)
 
   const runDiscovery = async () => {
     if (!window.api?.show.discoverDevices) return
     setScanning(true)
     try {
-      await window.api.show.discoverDevices()
+      const result = await window.api.show.discoverDevices()
+      if (result.skippedSubnetSweep) {
+        setSkippedSubnetSweep(true)
+      } else {
+        setSkippedSubnetSweep(false)
+      }
     } finally {
       setScanning(false)
     }
@@ -52,7 +58,13 @@ export function ShowControlPage() {
     const unsubDiscoveryError = window.api.show.onDiscoveryError(setDiscoveryError)
     void window.api.show.espStatusList().then(setDevices)
     refreshTargets()
-    void runDiscovery()
+
+    // 演出進行中不要自動掃描，避免 ARP 廣播干擾 timecode
+    const showRunning = useShowStore.getState().bridge.running
+    if (!showRunning) {
+      void runDiscovery()
+    }
+
     return () => {
       unsubBridge()
       unsubEsp()
@@ -160,6 +172,12 @@ export function ShowControlPage() {
       {discoveryError ? (
         <p className="hint discovery-error" role="alert">
           ⚠ {discoveryError}
+        </p>
+      ) : null}
+
+      {skippedSubnetSweep ? (
+        <p className="hint">
+          演出進行中，已跳過子網掃描以避免無線干擾。停止 Bridge 後再按「掃描裝置」可做完整掃描。
         </p>
       ) : null}
 

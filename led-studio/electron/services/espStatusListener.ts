@@ -112,7 +112,7 @@ export class EspStatusListener {
   }
 
   /** Broadcast + subnet unicast hello sweep so ESPs discover Studio without manual IP entry. */
-  async discoverDevices(): Promise<void> {
+  async discoverDevices(options?: { skipSubnetSweep?: boolean }): Promise<void> {
     if (!this.socket || this.discovering) return
     this.discovering = true
     try {
@@ -121,11 +121,16 @@ export class EspStatusListener {
         await sleep(80)
       }
 
-      const hosts = resolveLocalSubnetHosts()
-      console.log(`[esp-status] subnet discovery hello to ${hosts.length} hosts`)
-      for (const host of hosts) {
-        this.sendHelloToIp(host)
-        await sleep(4)
+      if (!options?.skipSubnetSweep) {
+        const hosts = resolveLocalSubnetHosts()
+        console.log(`[esp-status] subnet discovery hello to ${hosts.length} hosts`)
+        for (const host of hosts) {
+          this.sendHelloToIp(host)
+          await sleep(4)
+        }
+      } else {
+        // 演出進行中跳過 508 個主機的 unicast 掃描，避免 ARP 廣播干擾 100Hz timecode
+        console.log('[esp-status] 演出進行中，跳過 508 個主機的 unicast 掃描（避免 ARP 廣播干擾 timecode）')
       }
 
       for (let burst = 0; burst < 2; burst++) {
