@@ -33,6 +33,9 @@ static bool g_timecode_blackout = false;
 static uint32_t g_last_wifi_retry_ms = 0;
 static uint32_t g_last_health_log_ms = 0;
 static bool g_wifi_was_connected = false;
+// 開機橫幅可能因為 USB CDC 重連而漏掉，health log 每次都帶上這個字串，
+// 使用者無論什麼時候接上 monitor 都看得到上次的重置原因。
+static const char *g_reset_reason_name = "unknown";
 // setup 若失敗（config 載入不了、LED 初始化不了）就設為 true：韌體改為進入
 // 救援模式而不是死迴圈 —— serial 指令仍然可用，才有辦法從 Studio 診斷與重設。
 static bool g_boot_failed = false;
@@ -108,14 +111,20 @@ static void logHealth(uint32_t now_ms) {
   formatShowTimeMmSs(show_ms, show_time, sizeof(show_time));
   Serial.printf(
       "[health] state=%s show=%s wifi=%s ip=%s rssi=%d sync=%s playing=%s seq=%u "
-      "udp_rx=%u udp_drop=%u udp_dup=%u last_pkt_age_ms=%u local_mode=%s\n",
+      "udp_rx=%u udp_drop=%u udp_dup=%u last_pkt_age_ms=%u local_mode=%s "
+      "leds=%u reset=%s heap=%u\n",
       stateName(g_state), show_time, wifi_connected ? "connected" : "disconnected",
       wifi_connected ? WiFi.localIP().toString().c_str() : "-",
       wifi_connected ? WiFi.RSSI() : 0, g_clock.hasSync() ? "yes" : "no",
       g_clock.isPlaying() ? "yes" : "no", g_clock.lastSequence(),
       g_sync_rx.packetsReceived(), g_sync_rx.packetsDropped(),
       g_sync_rx.packetsDuplicated(), last_pkt_age,
-      g_local_mode ? "on" : "off");
+      g_local_mode ? "on" : "off",
+      // leds / reset / heap 是查「調高 LED 數量之後開始重開機」時最需要的三個數字：
+      // leds 確認板子實際跑的是哪份 config、reset 說出上次為什麼重開
+      // （brownout vs panic vs watchdog，處理方向完全不同）、
+      // heap 排除記憶體不足這條線。
+      g_config.hardware.led_count, g_reset_reason_name, ESP.getFreeHeap());
 }
 
 static void renderStateIndicator(uint32_t now_ms) {
@@ -152,12 +161,35 @@ void setup() {
   // 必須在 begin() 之前設定才有效。
   Serial.setRxBufferSize(4096);
   Serial.begin(115200);
-  delay(500);
+
+  // 等 USB CDC 的 host 端真的接上再印開機橫幅。
+  //
+  // 為什麼需要這段：原本只 delay(500) 就開始印，但 host（pio device monitor /
+  // Studio 的 DebugView）在板子重開後要花超過 500ms 才會重新開啟 CDC，所以
+  // 「Reset reason:」那一行每次都被吃掉 —— 板子在 brownout 迴圈時，使用者
+  // 看到的只有 "Disconnected (read failed: Errno 6)" 反覆出現，完全查不到原因。
+  //
+  // 上限 2 秒：沒有接 host 時（正式演出）不能卡在這裡等。
+  // ARDUINO_USB_CDC_ON_BOOT 時 Serial 的 operator bool() 反映 host 有沒有開埠；
+  // 走 UART 橋接晶片的板子恆為 true，所以這個迴圈對它們是零成本。
+  const uint32_t serial_wait_start = millis();
+  while (!Serial && (millis() - serial_wait_start) < 2000) {
+    delay(50);
+  }
+  delay(150);
+
   Serial.println();
   Serial.printf("LED Timecode Sync v%s\n", FIRMWARE_VERSION);
   const esp_reset_reason_t reset_reason = esp_reset_reason();
+  g_reset_reason_name = resetReasonName(reset_reason);
   Serial.printf("Reset reason: %s (%d)\n", resetReasonName(reset_reason),
                 static_cast<int>(reset_reason));
+  if (reset_reason == ESP_RST_BROWNOUT) {
+    Serial.println(
+        "[app] ⚠ brownout：電壓被拉到門檻以下而重置。常見於 LED 數量或亮度"
+        "調高之後，WiFi 無線電啟動的電流尖峰壓垮電源。"
+        "請檢查 5V 供電餘裕、線徑、燈條端的電容，或調低 max_brightness。");
+  }
   Serial.printf("Chip: %s @ %u MHz, LED_COUNT_MAX=%u, LED_DATA_GPIO=%d, default_led_type=WS2811\n",
                 ESP.getChipModel(), ESP.getCpuFreqMHz(), LED_COUNT_MAX,
                 LED_DATA_GPIO);
