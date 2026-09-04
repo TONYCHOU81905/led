@@ -141,9 +141,24 @@ void SyncReceiver::poll(ClockSync &clock, AppSyncState &state) {
                         remote_ip.toString().c_str(), remote_port,
                         packetTypeName(pkt.packet_type), pkt.sequence, show);
         }
+        // PAUSE 也必須節流，不能只節流 RUNNING。
+        //
+        // PAUSE 是 5 Hz 的持續心跳（不是一次性的控制事件），繞過節流的話
+        // 暫停中每秒就印 5 行。實測 3 分鐘浸泡收到 3233 行 [udp]，其中
+        // 絕大多數是 PAUSE —— 而 RUNNING 時若同樣不節流會是每秒 100 行、
+        // 約 7500 bytes/s，吃掉 115200 baud 的 65%。
+        //
+        // 這不只是 log 太吵：Serial.printf 在 HWCDC 上緩衝滿了會阻塞
+        // （host 沒有及時把資料讀走時），那會卡住封包處理迴圈，直接變成
+        // 同步抖動。Studio 端早就把 PAUSE 一起節流了
+        // （timecodeBridge.ts 的 lastDebugLogAt），韌體這側沒跟上。
+        //
+        // START / SEEK / STOP 這些真正的一次性控制事件仍然每次都印。
+        const bool is_heartbeat =
+            pkt.packet_type == TC_RUNNING || pkt.packet_type == TC_PAUSE;
         if (_last_debug_log_ms == 0 ||
             (_last_packet_ms - _last_debug_log_ms) >= kRxDebugIntervalMs ||
-            pkt.packet_type != TC_RUNNING) {
+            !is_heartbeat) {
           _last_debug_log_ms = _last_packet_ms;
           char show[16];
           formatShowTimeMmSs(pkt.music_time_ms, show, sizeof(show));

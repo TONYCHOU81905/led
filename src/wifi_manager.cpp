@@ -19,6 +19,19 @@ void WifiManager::beginConnect(const NetworkConfig &net) {
   //    修好之後這個數字應該掉到 10ms 上下 —— 可以用 ping 直接驗證。
   WiFi.setSleep(false);
 
+  // 降低發射功率以減少電流尖峰（可選，預設不改）。
+  //
+  // 預設是 19.5dBm（最大）。實測這塊板子在 WiFi 起來的瞬間會 brownout，
+  // 而發射尖峰也會在演出中隨機造成同樣的重置 —— 那會表現為「跑一半突然
+  // 重開」，比開不了機更難查。
+  //
+  // 刻意預設「不改」：降功率會犧牲距離，而實測 RSSI 已經是 -70dBm，
+  // 餘裕不多，不該在使用者不知情的情況下靜靜地變差。
+  // 供電改善之後仍會 brownout 時，用 -DWIFI_TX_POWER_DBM=13 之類逐步下調。
+#ifdef WIFI_TX_POWER_DBM
+  WiFi.setTxPower(static_cast<wifi_power_t>(WIFI_TX_POWER_DBM * 4));
+#endif
+
   WiFi.disconnect(false);
   Serial.printf("[wifi] begin connect to '%s' (non-blocking)\n", net.ssid);
   WiFi.begin(net.ssid, net.password);
@@ -42,9 +55,12 @@ bool WifiManager::connect(const NetworkConfig &net, uint32_t timeout_ms) {
   // RSSI 與 sleep 狀態一起印：這兩個是「連上了但收不到 multicast」時
   // 最先要看的兩個數字。RSSI 弱於 -75dBm 時 AP 常會丟 multicast，
   // 那時候問題在天線／距離，不在軟體。
-  Serial.printf("[wifi] connected, IP=%s RSSI=%d sleep=%s\n",
+  // tx_dbm 一起印：brownout 與距離不足是相反方向的問題，
+  // 看到實際功率才知道往哪邊調。
+  Serial.printf("[wifi] connected, IP=%s RSSI=%d sleep=%s tx=%.1fdBm\n",
                 WiFi.localIP().toString().c_str(), WiFi.RSSI(),
-                WiFi.getSleep() ? "on(省電，會漏 multicast)" : "off");
+                WiFi.getSleep() ? "on(省電，會漏 multicast)" : "off",
+                static_cast<float>(WiFi.getTxPower()) / 4.0f);
   return true;
 }
 
