@@ -225,6 +225,16 @@ void setup() {
   // 判別假說 2-B：WiFi 中斷是否干擾 FastLED 的 RMT 訊號
 #ifndef DIAG_DISABLE_WIFI
   g_state = STATE_WIFI_CONNECTING;
+
+  // WiFi 協定棧初始化（WiFi.mode(WIFI_STA)）會一次要走約 50KB heap，是整個
+  // 開機流程單筆最大的配置。這行必須印在 g_wifi.connect() 之前 ——
+  // 之前板子在「self-test done 之後、[wifi] begin connect 之前」重開機，
+  // 中間完全沒有任何輸出，無從判斷是不是 heap 不夠。
+  // 這塊板子靜態 RAM 就用掉 67%，餘裕本來就不多。
+  Serial.printf("[app] pre-WiFi heap=%u（最大連續區塊=%u），LED 總數=%u\n",
+                ESP.getFreeHeap(), ESP.getMaxAllocHeap(),
+                g_config.hardware.led_count);
+
   if (!g_wifi.connect(g_config.network)) {
     Serial.println("[app] WiFi failed — continuing offline for debug");
   }
