@@ -118,7 +118,7 @@ bool SerialProtocol::finalizeConfigJson(
     ConfigLoader &loader, DeviceConfig &cfg, const char *json, size_t len,
     const uint8_t prev_gpio, const uint16_t prev_led_count,
     const LedChipsetType prev_led_type, const char *prev_ssid,
-    const char *prev_pass) {
+    const char *prev_pass, const bool in_place) {
   char fallback_ssid[64];
   char fallback_pass[64];
   strncpy(fallback_ssid, cfg.network.ssid, sizeof(fallback_ssid) - 1);
@@ -128,7 +128,14 @@ bool SerialProtocol::finalizeConfigJson(
   const uint16_t fallback_tc_port = cfg.network.timecode_port;
   const uint16_t fallback_st_port = cfg.network.status_port;
 
-  if (!ConfigJsonParser::parse(json, len, cfg)) {
+  // in_place：分段上傳擁有自己的可變緩衝區，走 zero-copy 省掉所有字串副本。
+  // 那是解 NoMemory 的最大單筆節省（config 幾乎全是字串）。
+  // 另兩個呼叫端來源是 Arduino String，不能就地改寫，只能走複製模式。
+  const bool parsed = in_place
+                          ? ConfigJsonParser::parseInPlace(
+                                const_cast<char *>(json), len, cfg)
+                          : ConfigJsonParser::parse(json, len, cfg);
+  if (!parsed) {
     respondError("config parse failed");
     return false;
   }
@@ -280,7 +287,7 @@ void SerialProtocol::respondEndConfig(ConfigLoader &loader, DeviceConfig &cfg) {
 
   const bool ok = finalizeConfigJson(loader, cfg, _chunk.buffer, _chunk.total,
                                      prev_gpio, prev_led_count, prev_led_type,
-                                     prev_ssid, prev_pass);
+                                     prev_ssid, prev_pass, /*in_place=*/true);
   _chunk.reset();
   (void)ok;
 }
