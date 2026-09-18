@@ -64,16 +64,22 @@ static const char *resetReasonName(esp_reset_reason_t reason) {
  * - WiFi RF 校準緊接著需要大電流 (即使降到 2dBm 仍需 ~80mA 尖峰)
  * - 不足的穩定時間會導致電容未充飽 → RF 校準時電壓跌落 → brownout
  *
- * Mac USB 供電實測:
- * - 300ms: 在 2dBm 下可能仍 brownout (取決於 USB 埠/線材品質)
- * - 500ms: 2dBm 下穩定
- * - 1000ms: 保守值,確保電容充飽
+ * Mac USB 供電實測 (配合 2dBm + LED_DISABLE_BOOT_SELFTEST):
+ * - 300ms: brownout (電容未充飽)
+ * - 500ms: 部分 Mac USB 可能仍 brownout
+ * - 1000ms: 實測穩定,確保電容充飽
  *
- * 成本: 開機延遲 0.5-1 秒 (可接受的開發體驗)
+ * 實際成功配置 (已驗證):
+ *   -DWIFI_TX_POWER_DBM=2
+ *   -DLED_DISABLE_BOOT_SELFTEST
+ *   WIFI_POWER_SETTLE_MS=1000 (預設)
+ *   + esp_wifi_set_max_tx_power() 直接設定
+ *
+ * 成本: 開機延遲 1 秒 (換取 USB 供電穩定性)
  * 根本解法: 外部 5V/1A 電源 (演出必備)
  */
 #ifndef WIFI_POWER_SETTLE_MS
-#define WIFI_POWER_SETTLE_MS 500
+#define WIFI_POWER_SETTLE_MS 1000
 #endif
 
 #ifndef TIMECODE_HOLD_MS

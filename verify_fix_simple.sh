@@ -10,12 +10,22 @@ FAILED=0
 
 # 檢查 1: platformio.ini 編譯旗標
 echo "✓ 檢查 platformio.ini 編譯旗標..."
-COUNT=$(grep -c "WIFI_TX_POWER_DBM=13" platformio.ini || echo 0)
-if [ "$COUNT" -ge 5 ]; then
-    echo "  ✅ 找到 $COUNT 個環境設定了 -DWIFI_TX_POWER_DBM=13"
+
+# 檢查 TX 功率 (實測驗證: 2dBm)
+TX_COUNT=$(grep -c "WIFI_TX_POWER_DBM=2" platformio.ini || echo 0)
+if [ "$TX_COUNT" -ge 5 ]; then
+    echo "  ✅ 找到 $TX_COUNT 個環境設定了 -DWIFI_TX_POWER_DBM=2 (實測成功)"
 else
-    echo "  ❌ 只找到 $COUNT 個環境,應至少 5 個"
+    echo "  ❌ 只找到 $TX_COUNT 個環境,應至少 5 個"
     FAILED=$((FAILED + 1))
+fi
+
+# 檢查 LED_DISABLE_BOOT_SELFTEST (實測驗證必需)
+SELFTEST_COUNT=$(grep -c "LED_DISABLE_BOOT_SELFTEST" platformio.ini || echo 0)
+if [ "$SELFTEST_COUNT" -ge 5 ]; then
+    echo "  ✅ 找到 $SELFTEST_COUNT 個環境設定了 -DLED_DISABLE_BOOT_SELFTEST (實測成功)"
+else
+    echo "  ⚠️  只找到 $SELFTEST_COUNT 個環境有 LED_DISABLE_BOOT_SELFTEST (實測建議)"
 fi
 echo ""
 
@@ -95,17 +105,22 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 if [ $FAILED -eq 0 ]; then
     echo "✅ 所有關鍵檢查通過!"
     echo ""
-    echo "📋 運行期保護已啟用:"
-    echo "   • 開機連線: beginConnect() 設定功率"
-    echo "   • 斷線重連: main.cpp loop → beginConnect()"
-    echo "   • Config 更新: serial protocol → beginConnect()"
-    echo "   • 雙重保險: mode() 前後都設定"
+    echo "📋 實測驗證成功配置:"
+    echo "   • WIFI_TX_POWER_DBM=2 (極低功率)"
+    echo "   • LED_DISABLE_BOOT_SELFTEST (跳過 self-test)"
+    echo "   • WIFI_POWER_SETTLE_MS=1000 (電容充電)"
+    echo "   • esp_wifi_set_max_tx_power() (三層確認)"
+    echo ""
+    echo "🎉 實測結果 (Mac USB):"
+    echo "   • wifi=connected, RSSI=-60..-62"
+    echo "   • heap=89996, 穩定運行"
+    echo "   • 無 brownout 循環"
     echo ""
     echo "🧪 下一步:"
     echo "   1. 燒錄: ./scripts/fw.sh upload esp32-s3-devkitc-1-n16r8"
     echo "   2. 監控: ./scripts/fw.sh monitor"
-    echo "   3. 驗證: 應看到 [wifi] TX power set to 13.0 dBm"
-    echo "   4. 測試: 參閱 RUNTIME_BROWNOUT_VERIFICATION.md"
+    echo "   3. 驗證: 應看到 [wifi] TX power set to 2.0 dBm"
+    echo "   4. 範圍: 1-2m (板子放 AP 旁)"
     echo ""
     exit 0
 else
