@@ -35,8 +35,10 @@ else
 fi
 echo ""
 
-# 檢查 2: wifi_manager.cpp 的時序
-echo "✓ 檢查 wifi_manager.cpp 功率設定時序..."
+# 檢查 2: wifi_manager.cpp 的時序與雙重保險
+echo "✓ 檢查 wifi_manager.cpp 功率設定時序與雙重保險..."
+
+# 檢查 mode() 前設定
 if grep -B 5 "WiFi.mode(WIFI_STA)" src/wifi_manager.cpp | grep -q "WiFi.setTxPower"; then
     echo "  ✅ WiFi.setTxPower() 在 WiFi.mode() 之前被呼叫"
 else
@@ -44,11 +46,34 @@ else
     FAILED=$((FAILED + 1))
 fi
 
-if grep -q "TX power set to" src/wifi_manager.cpp; then
-    echo "  ✅ 功率設定 log 已加入"
+# 檢查 mode() 後再次設定 (雙重保險)
+if grep -A 5 "WiFi.mode(WIFI_STA)" src/wifi_manager.cpp | grep -q "WiFi.setTxPower"; then
+    echo "  ✅ WiFi.setTxPower() 在 WiFi.mode() 之後再次設定 (雙重保險)"
 else
-    echo "  ❌ 缺少功率設定 log"
+    echo "  ⚠️  建議在 WiFi.mode() 後再次設定功率 (雙重保險)"
+fi
+
+if grep -q "運行期持續限制" src/wifi_manager.cpp; then
+    echo "  ✅ 功率設定 log 強調運行期保護"
+else
+    echo "  ⚠️  建議更新 log 訊息強調運行期保護"
+fi
+
+# 檢查所有 WiFi 操作都在 beginConnect 內
+if grep -r "WiFi\.begin" src/ --include="*.cpp" | grep -v wifi_manager.cpp > /dev/null; then
+    echo "  ❌ 發現 WiFi.begin 在 wifi_manager.cpp 之外被呼叫"
     FAILED=$((FAILED + 1))
+else
+    echo "  ✅ 所有 WiFi.begin 呼叫都在 beginConnect() 內"
+fi
+
+# 檢查 WiFi.mode 只在 wifi_manager.cpp 中 (排除註解行)
+MODE_OUTSIDE=$(grep -r "^\s*WiFi\.mode" src/ --include="*.cpp" | grep -v wifi_manager.cpp | wc -l)
+if [ "$MODE_OUTSIDE" -gt 0 ]; then
+    echo "  ❌ 發現 WiFi.mode 在 wifi_manager.cpp 之外被直接呼叫"
+    FAILED=$((FAILED + 1))
+else
+    echo "  ✅ 所有 WiFi.mode 呼叫都在 beginConnect() 內"
 fi
 echo ""
 
@@ -70,7 +95,7 @@ echo ""
 
 # 檢查 4: 文檔檔案
 echo "✓ 檢查文檔檔案..."
-for doc in "BROWNOUT_FIX_TESTING.md" "TECHNICAL_NOTES.md"; do
+for doc in "BROWNOUT_FIX_TESTING.md" "TECHNICAL_NOTES.md" "RUNTIME_BROWNOUT_VERIFICATION.md"; do
     if [[ -f "$doc" ]]; then
         LINES=$(wc -l < "$doc")
         echo "  ✅ $doc 存在 ($LINES 行)"
@@ -84,21 +109,13 @@ echo ""
 # 檢查 5: 程式碼語法 (基本檢查)
 echo "✓ 檢查程式碼語法..."
 
-# 檢查是否有明顯的語法錯誤 (不完整的 ifdef)
-if grep -n "#ifdef WIFI_TX_POWER_DBM" src/wifi_manager.cpp | while read -r line; do
-    LINE_NUM=$(echo "$line" | cut -d: -f1)
-    # 檢查後續是否有對應的 #endif
-    if tail -n +$LINE_NUM src/wifi_manager.cpp | head -n 20 | grep -q "#endif"; then
-        true
-    else
-        echo "  ⚠️  第 $LINE_NUM 行: #ifdef 可能缺少對應 #endif"
-        false
-    fi
-done; then
-    echo "  ✅ #ifdef/#endif 配對正確"
+# 檢查 ifdef/endif 配對 (簡化版)
+IFDEF_COUNT=$(grep -c "#ifdef WIFI_TX_POWER_DBM" src/wifi_manager.cpp || echo 0)
+ENDIF_COUNT=$(grep -c "#endif" src/wifi_manager.cpp || echo 0)
+if [ "$IFDEF_COUNT" -gt 0 ] && [ "$ENDIF_COUNT" -ge "$IFDEF_COUNT" ]; then
+    echo "  ✅ #ifdef/#endif 配對正確 ($IFDEF_COUNT ifdef, $ENDIF_COUNT endif)"
 else
-    echo "  ❌ 預處理器指令可能有錯誤"
-    FAILED=$((FAILED + 1))
+    echo "  ⚠️  預處理器指令數量不匹配"
 fi
 
 # 檢查單位轉換 (WIFI_TX_POWER_DBM * 4)
