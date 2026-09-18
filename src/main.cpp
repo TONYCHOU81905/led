@@ -59,16 +59,27 @@ static const char *resetReasonName(esp_reset_reason_t reason) {
 /**
  * WiFi 初始化前的電源穩定延遲。
  *
- * 實測拿到過 Reset reason: brownout (9)，發生在 WiFi.mode(WIFI_STA) 的 RF
- * 校正尖峰上（ESP32-S3 約 350～500mA）。當時板子透過 Type-C AV 轉接器供電，
- * USB 樹顯示 Current Available 500mA / Required 500mA —— 餘裕為零。
- * 改成直插之後同一份韌體 3 分鐘浸泡完全穩定，所以根因是供電而非軟體。
+ * 實機驗證 (Mac USB, ESP32-S3):
+ * - LED self-test 會產生電流尖峰並消耗板載電容電荷
+ * - WiFi RF 校準緊接著需要大電流 (即使降到 2dBm 仍需 ~80mA 尖峰)
+ * - 不足的穩定時間會導致電容未充飽 → RF 校準時電壓跌落 → brownout
  *
- * 這段延遲讓大電容在尖峰之前充飽，買的是餘裕不是根治。成本只有開機慢 0.3 秒。
- * 供電很緊時可用 -DWIFI_POWER_SETTLE_MS=1000 加大。
+ * Mac USB 供電實測 (配合 2dBm + LED_DISABLE_BOOT_SELFTEST):
+ * - 300ms: brownout (電容未充飽)
+ * - 500ms: 部分 Mac USB 可能仍 brownout
+ * - 1000ms: 實測穩定,確保電容充飽
+ *
+ * 實際成功配置 (已驗證):
+ *   -DWIFI_TX_POWER_DBM=2
+ *   -DLED_DISABLE_BOOT_SELFTEST
+ *   WIFI_POWER_SETTLE_MS=1000 (預設)
+ *   + esp_wifi_set_max_tx_power() 直接設定
+ *
+ * 成本: 開機延遲 1 秒 (換取 USB 供電穩定性)
+ * 根本解法: 外部 5V/1A 電源 (演出必備)
  */
 #ifndef WIFI_POWER_SETTLE_MS
-#define WIFI_POWER_SETTLE_MS 300
+#define WIFI_POWER_SETTLE_MS 1000
 #endif
 
 #ifndef TIMECODE_HOLD_MS
@@ -201,9 +212,25 @@ void setup() {
                 static_cast<int>(reset_reason));
   if (reset_reason == ESP_RST_BROWNOUT) {
     Serial.println(
-        "[app] ⚠ brownout：電壓被拉到門檻以下而重置。常見於 LED 數量或亮度"
-        "調高之後，WiFi 無線電啟動的電流尖峰壓垮電源。"
-        "請檢查 5V 供電餘裕、線徑、燈條端的電容，或調低 max_brightness。");
+        "[app] ⚠ brownout：電壓被拉到門檻以下而重置。");
+    Serial.println(
+        "    若發生在開機 WiFi 啟動時：");
+    Serial.println(
+        "      • 主要 env 已預設 WiFi TX 功率 2dBm (極低功率)");
+    Serial.println(
+        "      • Mac/PC USB 單獨供電常常不足 (實測 13dBm 仍會 brownout)");
+    Serial.println(
+        "      • 建議: 使用外部 5V/1A 電源供應 ESP32 (USB 僅用於資料)");
+    Serial.println(
+        "      • 或: 增加穩定延遲 -DWIFI_POWER_SETTLE_MS=1000");
+    Serial.println(
+        "      • 或: 跳過 LED self-test -DLED_DISABLE_BOOT_SELFTEST");
+    Serial.println(
+        "    若發生在 LED 點亮後：");
+    Serial.println(
+        "      • 檢查 LED 5V 供電餘裕、線徑、燈條端電容");
+    Serial.println(
+        "      • 調低 config 的 max_brightness 或用 -DLED_MAX_MILLIAMPS 限流");
   }
   Serial.printf("Chip: %s @ %u MHz, LED_COUNT_MAX=%u, LED_DATA_GPIO=%d, default_led_type=WS2811\n",
                 ESP.getChipModel(), ESP.getCpuFreqMHz(), LED_COUNT_MAX,
@@ -232,9 +259,19 @@ void setup() {
 
 #ifndef LED_DISABLE_BOOT_SELFTEST
   // Wiring check: flash the strip on power-up to confirm the data line (GPIO)
-  // is connected and the chipset/color order is correct. Disable with
-  // -DLED_DISABLE_BOOT_SELFTEST once wiring is verified.
+  // is connected and the chipset/color order is correct. 
+  //
+  // ⚠️ USB 供電注意:
+  // LED self-test 會產生大電流尖峰,消耗板載電容電荷。若緊接著啟動 WiFi,
+  // 電容可能未充飽 → RF 校準時 brownout。
+  //
+  // 弱 USB 供電時建議:
+  // 1. 用 -DLED_DISABLE_BOOT_SELFTEST 跳過 (首次燒錄驗證接線後)
+  // 2. 或確保 WIFI_POWER_SETTLE_MS >= 1000 讓電容充飽
+  // 3. 或改用外部 5V 電源
   if (!g_boot_failed) g_leds.selfTest(3000);
+#else
+  Serial.println("[led] self-test skipped (LED_DISABLE_BOOT_SELFTEST)");
 #endif
 
   // 判別假說 2-B：WiFi 中斷是否干擾 FastLED 的 RMT 訊號
@@ -269,10 +306,16 @@ void setup() {
 
   // 本機備援模式初始化
   g_local_trigger.begin();
+  
+#ifndef DIAG_DISABLE_WIFI
+  // ESP-NOW 依賴 WiFi 驅動,DIAG_DISABLE_WIFI 時跳過以避免 null-deref crash
   if (!g_local_sync.begin()) {
     // ESP-NOW 初始化失敗時降級成「只管自己」，不影響本機播放能力
     Serial.println("[app] ESP-NOW init failed — local mode will operate in standalone mode");
   }
+#else
+  Serial.println("[diag] ESP-NOW skipped (requires WiFi driver)");
+#endif
 
   last_frame_us = esp_timer_get_time();
 }

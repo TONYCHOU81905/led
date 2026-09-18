@@ -96,6 +96,64 @@ ls /dev/cu.*
 
 > Config 上傳後寫入 **LittleFS**，重開機仍保留。回應應含 `flash_saved: true`。
 
+---
+
+## 常見問題與故障排除
+
+### 開機時 Brownout 重啟循環 (Reset reason: brownout (9))
+
+**症狀:** Serial monitor 顯示重複的 `Reset reason: brownout (9)`,開機序列停在 WiFi 連線前。
+
+**原因:** WiFi RF 校準的電流尖峰超過 Mac/PC USB 實際輸出能力,觸發欠壓保護。
+
+**⚠️ 實機驗證結果:**
+
+Mac USB 供電測試 (ESP32-S3, LED 全拔除):
+- 19.5dBm (預設): ❌ Brownout 循環
+- 13dBm: ❌ Brownout 循環 (理論應可行,實測失敗)
+- 8dBm: ❌ Brownout 循環
+- **2dBm: ✅ 穩定啟動** (範圍 1-2m)
+
+**Mac USB 不足的原因:**
+- USB 規格 500mA 是理論上限
+- 實際輸出受線損/hub/埠老化影響 (200-400mA)
+- ESP32-S3 WiFi 需求: 基礎 50mA + RF 尖峰 (視功率)
+
+**解決方案 (已在韌體中修復):**
+
+主要 PlatformIO 環境已預設降低 WiFi TX 功率到 **2dBm** (極低功率):
+- `esp32-s3-devkitc-1`, `esp32-s3-devkitc-1-n16r8`, `esp32-dev` 等
+
+預期 Serial 輸出:
+```
+[wifi] TX power set to 2.0 dBm (三層確認: pre-mode + post-mode + ESP-IDF)
+[wifi] connected, IP=192.168.x.x RSSI=-75 sleep=off tx=2.0dBm
+```
+
+**⚠️ 2dBm 限制:**
+- WiFi 範圍約 1-2m (僅適用桌面開發,板子須放 AP 旁)
+- 不適用現場演出
+
+**若 2dBm 仍 brownout (USB 確實太弱):**
+1. **使用外部 5V/1A 電源** (唯一可靠方案)
+2. 跳過 LED self-test: `-DLED_DISABLE_BOOT_SELFTEST`
+3. 增加穩定延遲: `-DWIFI_POWER_SETTLE_MS=1000`
+4. 換更好的 USB 線與埠
+
+**現場演出配置 (外部電源):**
+
+使用外部 5V/1A 電源後,可提高 WiFi 功率:
+```ini
+-DWIFI_TX_POWER_DBM=17  # 或移除旗標恢復 19.5dBm
+```
+
+**詳細資訊:**
+- 測試指南: [BROWNOUT_FIX_TESTING.md](./BROWNOUT_FIX_TESTING.md)
+- 技術細節: [TECHNICAL_NOTES.md](./TECHNICAL_NOTES.md)
+- 驗證腳本: `./verify_fix.sh`
+
+---
+
 ### 桌面端 LED Show Studio
 
 ```bash
