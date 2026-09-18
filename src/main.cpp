@@ -64,8 +64,9 @@ static const char *resetReasonName(esp_reset_reason_t reason) {
  * USB 樹顯示 Current Available 500mA / Required 500mA —— 餘裕為零。
  * 改成直插之後同一份韌體 3 分鐘浸泡完全穩定，所以根因是供電而非軟體。
  *
- * 這段延遲讓大電容在尖峰之前充飽，買的是餘裕不是根治。成本只有開機慢 0.3 秒。
- * 供電很緊時可用 -DWIFI_POWER_SETTLE_MS=1000 加大。
+ * 這段延遲讓大電容在尖峰之前充飽，配合降低的 WiFi TX 功率（主要 env 預設
+ * 13dBm）提供雙重保護。成本只有開機慢 0.3 秒。供電很緊時可用
+ * -DWIFI_POWER_SETTLE_MS=1000 加大（但降 TX 功率才是根本解法）。
  */
 #ifndef WIFI_POWER_SETTLE_MS
 #define WIFI_POWER_SETTLE_MS 300
@@ -201,9 +202,15 @@ void setup() {
                 static_cast<int>(reset_reason));
   if (reset_reason == ESP_RST_BROWNOUT) {
     Serial.println(
-        "[app] ⚠ brownout：電壓被拉到門檻以下而重置。常見於 LED 數量或亮度"
-        "調高之後，WiFi 無線電啟動的電流尖峰壓垮電源。"
-        "請檢查 5V 供電餘裕、線徑、燈條端的電容，或調低 max_brightness。");
+        "[app] ⚠ brownout：電壓被拉到門檻以下而重置。");
+    Serial.println(
+        "    若發生在開機 WiFi 啟動時：主要 env 已預設 WiFi TX 功率 13dBm");
+    Serial.println(
+        "    以避免 USB 供電欠壓。若仍發生,檢查 USB 線/埠品質,或用專用電源。");
+    Serial.println(
+        "    若發生在 LED 點亮後：檢查 LED 5V 供電餘裕、線徑、燈條端電容，");
+    Serial.println(
+        "    或調低 config 的 max_brightness / 用 -DLED_MAX_MILLIAMPS 限流。");
   }
   Serial.printf("Chip: %s @ %u MHz, LED_COUNT_MAX=%u, LED_DATA_GPIO=%d, default_led_type=WS2811\n",
                 ESP.getChipModel(), ESP.getCpuFreqMHz(), LED_COUNT_MAX,

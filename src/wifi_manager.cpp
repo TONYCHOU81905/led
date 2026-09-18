@@ -2,6 +2,21 @@
 #include <Arduino.h>
 
 void WifiManager::beginConnect(const NetworkConfig &net) {
+  // 必須在 WiFi.mode() 之前設定發射功率 —— mode() 會觸發 RF 校準,
+  // 那個瞬間的電流尖峰取決於目標發射功率。先降功率再啟動 RF 才有效。
+  //
+  // 預設是 19.5dBm（最大），RF 校準尖峰約 350～500mA。在 USB 供電
+  // （Mac/PC USB 埠限流 500mA）時會觸發 brownout detector → 重啟循環。
+  //
+  // 主要 env 現在預設 13dBm：犧牲約 6dB RSSI（-64 → -70dBm 左右），
+  // 換取在 USB 供電下穩定啟動。現場演出使用專用電源時，移除編譯旗標
+  // -DWIFI_TX_POWER_DBM=13 或改為 =19 即可恢復最大範圍。
+#ifdef WIFI_TX_POWER_DBM
+  WiFi.setTxPower(static_cast<wifi_power_t>(WIFI_TX_POWER_DBM * 4));
+  Serial.printf("[wifi] TX power set to %.1f dBm (減少 USB 供電欠壓風險)\n",
+                static_cast<float>(WIFI_TX_POWER_DBM));
+#endif
+
   WiFi.mode(WIFI_STA);
 
   // 關閉 WiFi 省電（預設是 WIFI_PS_MIN_MODEM），三個理由：
@@ -18,19 +33,6 @@ void WifiManager::beginConnect(const NetworkConfig &net) {
   //    實機量到 LAN 內 68～87ms（正常應該是個位數到十幾毫秒）。
   //    修好之後這個數字應該掉到 10ms 上下 —— 可以用 ping 直接驗證。
   WiFi.setSleep(false);
-
-  // 降低發射功率以減少電流尖峰（可選，預設不改）。
-  //
-  // 預設是 19.5dBm（最大）。實測這塊板子在 WiFi 起來的瞬間會 brownout，
-  // 而發射尖峰也會在演出中隨機造成同樣的重置 —— 那會表現為「跑一半突然
-  // 重開」，比開不了機更難查。
-  //
-  // 刻意預設「不改」：降功率會犧牲距離，而實測 RSSI 已經是 -70dBm，
-  // 餘裕不多，不該在使用者不知情的情況下靜靜地變差。
-  // 供電改善之後仍會 brownout 時，用 -DWIFI_TX_POWER_DBM=13 之類逐步下調。
-#ifdef WIFI_TX_POWER_DBM
-  WiFi.setTxPower(static_cast<wifi_power_t>(WIFI_TX_POWER_DBM * 4));
-#endif
 
   WiFi.disconnect(false);
   Serial.printf("[wifi] begin connect to '%s' (non-blocking)\n", net.ssid);
