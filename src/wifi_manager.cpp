@@ -2,22 +2,37 @@
 #include <Arduino.h>
 
 void WifiManager::beginConnect(const NetworkConfig &net) {
-  // 必須在 WiFi.mode() 之前設定發射功率 —— mode() 會觸發 RF 校準,
-  // 那個瞬間的電流尖峰取決於目標發射功率。先降功率再啟動 RF 才有效。
+  // 發射功率必須在 WiFi.mode() 之前設定,並在 mode() 之後再次確認。
   //
-  // 預設是 19.5dBm（最大），RF 校準尖峰約 350～500mA。在 USB 供電
-  // （Mac/PC USB 埠限流 500mA）時會觸發 brownout detector → 重啟循環。
+  // 原因:
+  // 1. Arduino-ESP32 會快取 setTxPower() 並在 esp_wifi_init() 時應用
+  // 2. mode() 可能觸發 WiFi 驅動初始化,此時會套用快取的功率設定
+  // 3. mode() 後再次設定是雙重保險:防止某些驅動路徑遺漏快取值
   //
-  // 主要 env 現在預設 13dBm：犧牲約 6dB RSSI（-64 → -70dBm 左右），
-  // 換取在 USB 供電下穩定啟動。現場演出使用專用電源時，移除編譯旗標
-  // -DWIFI_TX_POWER_DBM=13 或改為 =19 即可恢復最大範圍。
+  // TX 尖峰問題:
+  // - 預設 19.5dBm: RF 校準 ~500mA, 連線中 TX burst 可達 350-450mA
+  // - 13dBm: RF 校準 ~280mA, TX burst ~200-250mA
+  // - USB 500mA 上限下,19.5dBm 會在開機 OR 運行期觸發 brownout
+  //
+  // 這個函式是所有 WiFi 連線的統一入口 (開機 + 斷線重連 + config 更新),
+  // 確保無論何時連線都套用功率限制 → 保護整個運行期,不只是開機。
 #ifdef WIFI_TX_POWER_DBM
-  WiFi.setTxPower(static_cast<wifi_power_t>(WIFI_TX_POWER_DBM * 4));
-  Serial.printf("[wifi] TX power set to %.1f dBm (減少 USB 供電欠壓風險)\n",
-                static_cast<float>(WIFI_TX_POWER_DBM));
+  const wifi_power_t target_power = static_cast<wifi_power_t>(WIFI_TX_POWER_DBM * 4);
+  
+  // 第一次設定: 在 mode() 前,讓 Arduino-ESP32 快取此值
+  WiFi.setTxPower(target_power);
 #endif
 
   WiFi.mode(WIFI_STA);
+
+#ifdef WIFI_TX_POWER_DBM
+  // 第二次設定: mode() 後再次確認 (雙重保險)
+  // 這確保即使驅動初始化遺漏快取值,仍會在連線前套用
+  WiFi.setTxPower(target_power);
+  
+  Serial.printf("[wifi] TX power set to %.1f dBm (運行期持續限制,避免 USB 欠壓)\n",
+                static_cast<float>(WIFI_TX_POWER_DBM));
+#endif
 
   // 關閉 WiFi 省電（預設是 WIFI_PS_MIN_MODEM），三個理由：
   //
