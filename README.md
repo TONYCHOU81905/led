@@ -96,6 +96,46 @@ ls /dev/cu.*
 
 > Config 上傳後寫入 **LittleFS**，重開機仍保留。回應應含 `flash_saved: true`。
 
+---
+
+## 常見問題與故障排除
+
+### 開機時 Brownout 重啟循環 (Reset reason: brownout (9))
+
+**症狀:** Serial monitor 顯示重複的 `Reset reason: brownout (9)`,開機序列停在 WiFi 連線前。
+
+**原因:** WiFi RF 校準的電流尖峰 (~500mA @ 19.5dBm) 超過 USB 供電上限 (500mA),觸發欠壓保護。
+
+**解決方案 (已在韌體中修復):**
+
+主要 PlatformIO 環境已預設降低 WiFi TX 功率到 13dBm:
+- `esp32-s3-devkitc-1`, `esp32-s3-devkitc-1-n16r8`, `esp32-dev` 等
+
+預期 Serial 輸出應包含:
+```
+[wifi] TX power set to 13.0 dBm (減少 USB 供電欠壓風險)
+[wifi] connected, IP=192.168.x.x RSSI=-70 sleep=off tx=13.0dBm
+```
+
+**若仍發生 brownout:**
+1. 使用短且品質好的 USB 線 (< 1m)
+2. 換不同的 USB 埠 (避免 hub,直連主機板)
+3. 使用專用 5V/1A 電源供應器
+
+**生產環境恢復最大 WiFi 範圍:**
+
+當使用專用電源且需要最大 WiFi 範圍時,編輯 `platformio.ini` 註解掉:
+```ini
+# -DWIFI_TX_POWER_DBM=13  # 註解掉恢復 19.5dBm
+```
+
+**詳細資訊:**
+- 測試指南: [BROWNOUT_FIX_TESTING.md](./BROWNOUT_FIX_TESTING.md)
+- 技術細節: [TECHNICAL_NOTES.md](./TECHNICAL_NOTES.md)
+- 驗證腳本: `./verify_fix.sh`
+
+---
+
 ### 桌面端 LED Show Studio
 
 ```bash
