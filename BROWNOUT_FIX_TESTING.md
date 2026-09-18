@@ -1,20 +1,82 @@
 # WiFi Brownout 修復測試指南
 
+## ⚠️ 重要更新 (基於實機驗證)
+
+**實測結果: Mac USB 供電下,13dBm 仍會 brownout。**
+
+經實機驗證,ESP32-S3 在 Mac USB 供電時:
+- 19.5dBm: ❌ Brownout 循環
+- 13dBm: ❌ Brownout 循環 (之前理論可行,實測失敗)
+- 8dBm: ❌ Brownout 循環
+- **2dBm: ✅ 穩定啟動** (範圍約 1-2m)
+
 ## 問題背景
 
-ESP32-S3 在 USB 供電時,WiFi RF 校準的電流尖峰會觸發 brownout detector,導致重啟循環。
+ESP32-S3 WiFi RF 校準電流尖峰超過 Mac/PC USB 實際輸出能力:
+- USB 規格: 5V @ 500mA (理論)
+- 實際輸出: 200-400mA (線損/hub/老化後)
+- ESP32-S3 需求: 基礎 50mA + RF 尖峰 (視 TX 功率)
 
 ## 修復內容
 
-降低預設 WiFi TX 功率從 19.5dBm → 13dBm,減少 RF 校準電流尖峰。
+降低預設 WiFi TX 功率到 **2dBm** (極低功率),確保 Mac USB 供電下可啟動。
 
-## 測試步驟
+## 實機測試結果記錄
+
+### 測試環境
+- 板子: ESP32-S3-DevKitC-1 (16MB Flash, 原生 USB)
+- 供電: Mac USB-C 埠直連
+- LED: 全部拔除
+- WiFi SSID: 'iot4fs'
+
+### 測試結果摘要
+
+| TX 功率 | Settle 延遲 | Self-Test | 結果 |
+|---------|-------------|-----------|------|
+| 19.5 dBm | 300ms | 啟用 | ❌ Brownout 循環 |
+| 13 dBm | 300ms | 啟用 | ❌ Brownout 循環 |
+| 13 dBm | 500ms | 啟用 | ❌ Brownout 循環 |
+| 8 dBm | 1000ms | 啟用 | ❌ Brownout 循環 |
+| **2 dBm** | **500ms** | **啟用** | ✅ **穩定啟動** |
+| 2 dBm | 500ms | 跳過 | ✅ 穩定 (更多餘裕) |
+
+### 13dBm 失敗案例 (實際 Log)
+
+```
+LED Timecode Sync v1.0.0
+Reset reason: brownout (9)  ← 重啟循環
+Chip: ESP32-S3 @ 240 MHz, LED_COUNT_MAX=1024
+[led] init 880 logical LEDs
+[led] self-test: 逐一點亮 6 個 output
+[led] self-test done
+[app] pre-WiFi heap=153KB
+[wifi] TX power set to 13.0 dBm (運行期持續限制,避免 USB 欠壓)
+[wifi] begin connect to 'iot4fs' (non-blocking)
+<USB 斷線 - Device not configured>
+<板子重啟,循環往復>
+```
+
+**關鍵觀察:**
+- 功率設定確實生效 (log 有顯示 13.0 dBm)
+- brownout 發生在 `begin connect` 幾秒後 → RF 校準尖峰
+- Mac USB 實際輸出 < 理論 500mA (線損/hub/老化)
+
+### 結論
+
+**Mac USB 單獨供電不足以支援 13dBm WiFi。**
+
+必須降到 2dBm (極低功率) 才能在 USB 供電下穩定啟動。
+
+---
+
+## 測試步驟 (2dBm 配置)
 
 ### 1. 準備環境
 
 - ESP32-S3 板子 (任意 Flash/PSRAM 配置)
-- Mac/PC USB 埠供電 (不使用外部電源)
-- **拔除所有 LED 燈條** (隔離 WiFi 與 LED 電流問題)
+- Mac/PC USB 埠供電
+- **拔除所有 LED 燈條** (隔離 LED 電流)
+- **WiFi AP 放在桌面上** (2dBm 範圍只有 1-2m)
 
 ### 2. 燒錄韌體
 
@@ -43,48 +105,59 @@ Chip: ESP32-S3 @ 240 MHz, LED_COUNT_MAX=1024, LED_DATA_GPIO=4
 ...
 [led] self-test done
 [app] pre-WiFi heap=153KB, LED 總數=880
-[wifi] TX power set to 13.0 dBm (減少 USB 供電欠壓風險)    ← 新增
-[wifi] begin connect to 'your-ssid' (non-blocking)
+[wifi] TX power set to 2.0 dBm (三層確認: pre-mode + post-mode + ESP-IDF)
+[wifi] begin connect to 'iot4fs' (non-blocking)
 ........
-[wifi] connected, IP=192.168.x.x RSSI=-70 sleep=off tx=13.0dBm    ← 確認功率
+[wifi] connected, IP=192.168.x.x RSSI=-75 sleep=off tx=2.0dBm
 [app] waiting for timecode on UDP 7770
-[health] state=WAIT_TIMECODE show=00:00 wifi=connected ...    ← 穩定運行
+[health] state=WAIT_TIMECODE ...
 ```
 
 ### 5. 成功指標
 
-✅ **必須滿足:**
+✅ **必須滿足 (Mac USB 供電):**
 1. `Reset reason` 不是 `brownout (9)`
-2. 看到 `TX power set to 13.0 dBm` 在 WiFi 連線之前
-3. 連線後 `tx=13.0dBm` 確認功率套用
-4. 不再出現 USB 斷線 → 重啟的循環
+2. 看到 `TX power set to 2.0 dBm (三層確認...)`
+3. 連線後 `tx=2.0dBm` 確認功率套用
+4. 不再出現 USB 斷線 → 重啟循環
 
-⚠️ **可接受的變化:**
-- RSSI 可能從 -64 降到 -70 dBm (仍在可用範圍)
-- 在良好 WiFi 環境下通訊應完全正常
+⚠️ **預期變化 (2dBm 極低功率):**
+- RSSI 約 -75 dBm (弱訊號但可用)
+- WiFi 範圍 1-2m (板子須放 AP 旁)
+- 僅適用桌面開發
 
-### 6. 如果仍然 brownout
+### 6. 如果仍然 brownout (2dBm 下)
 
-**檢查清單:**
+**根本原因: USB 供電確實不足**
 
-1. **USB 線品質**
-   - 使用短 (< 1m)、高品質 USB 線
-   - 避免 USB hub 或多層轉接器
+此時 Mac USB 實際輸出 < 200mA,即使 2dBm (~130mA 含基礎) 都不夠。
 
-2. **USB 埠供電能力**
-   - 嘗試不同的 USB 埠 (直連主機板 USB)
-   - 部分筆電 USB 埠供電不足
+**解決方案 (按優先順序):**
 
-3. **進一步降功率**
+1. **使用外部 5V 電源** (✅ 唯一可靠方案)
+   - USB 電源供應器 (5V/1A)
+   - 或行動電源 USB 輸出
+   - ESP32 接電源, Mac USB 僅用於資料
+
+2. **跳過 LED Self-Test**
    
-   編輯 `platformio.ini` 對應 env:
+   編輯 `platformio.ini`:
    ```ini
-   -DWIFI_TX_POWER_DBM=10    # 從 13 改為 10
+   -DLED_DISABLE_BOOT_SELFTEST  # 省略 3 秒 LED 閃爍
+   ```
+   
+   效果: 電容保持充飽,WiFi 啟動時有更多餘裕
+
+3. **增加穩定延遲**
+   
+   ```ini
+   -DWIFI_POWER_SETTLE_MS=1000  # 從 500ms 增加到 1 秒
    ```
 
-4. **使用外部電源**
-   - 5V/1A USB 電源供應器
-   - 或專用的穩壓電源模組
+4. **檢查 USB 線與埠**
+   - 換品質更好的 USB 線 (< 50cm)
+   - 直連 Mac USB 埠 (不經過 hub/轉接器)
+   - 換不同 USB 埠測試
 
 ## 進階測試場景
 
