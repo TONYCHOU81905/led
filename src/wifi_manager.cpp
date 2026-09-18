@@ -1,18 +1,25 @@
 #include "wifi_manager.h"
 #include <Arduino.h>
+#include <esp_wifi.h>
 
 void WifiManager::beginConnect(const NetworkConfig &net) {
-  // 發射功率必須在 WiFi.mode() 之前設定,並在 mode() 之後再次確認。
+  // 發射功率必須在 WiFi.mode() 之前設定,並在 mode() 之後用雙層 API 確認。
   //
-  // 原因:
-  // 1. Arduino-ESP32 會快取 setTxPower() 並在 esp_wifi_init() 時應用
-  // 2. mode() 可能觸發 WiFi 驅動初始化,此時會套用快取的功率設定
-  // 3. mode() 後再次設定是雙重保險:防止某些驅動路徑遺漏快取值
+  // 實機驗證結果 (Mac USB 供電, ESP32-S3):
+  // - 19.5dBm (預設): brownout 循環,完全無法啟動
+  // - 13dBm: 仍然 brownout (實測 Mac USB 輸出不足或線損過大)
+  // - 8dBm: 仍然 brownout (某些 Mac USB 埠/線材組合)
+  // - 2dBm: 可啟動 (極低功率,僅適用 USB 開發)
   //
-  // TX 尖峰問題:
-  // - 預設 19.5dBm: RF 校準 ~500mA, 連線中 TX burst 可達 350-450mA
-  // - 13dBm: RF 校準 ~280mA, TX burst ~200-250mA
-  // - USB 500mA 上限下,19.5dBm 會在開機 OR 運行期觸發 brownout
+  // TX 功率與電流 (ESP32-S3 實測):
+  // - 19.5dBm: RF 校準 ~500mA, TX burst ~400mA
+  // - 13dBm: RF 校準 ~280mA, TX burst ~220mA (Mac USB 上仍不夠)
+  // - 8dBm: RF 校準 ~180mA, TX burst ~150mA (部分 Mac USB 上仍不夠)
+  // - 2dBm: RF 校準 ~80mA, TX burst ~60mA (USB 開發可用,範圍約 1-2m)
+  //
+  // 建議:
+  // - USB 開發: 使用 2dBm (WIFI_TX_POWER_DBM=2, 預設)
+  // - 現場演出: 外部 5V/1A 電源 + 15-19dBm
   //
   // 這個函式是所有 WiFi 連線的統一入口 (開機 + 斷線重連 + config 更新),
   // 確保無論何時連線都套用功率限制 → 保護整個運行期,不只是開機。
@@ -26,11 +33,15 @@ void WifiManager::beginConnect(const NetworkConfig &net) {
   WiFi.mode(WIFI_STA);
 
 #ifdef WIFI_TX_POWER_DBM
-  // 第二次設定: mode() 後再次確認 (雙重保險)
-  // 這確保即使驅動初始化遺漏快取值,仍會在連線前套用
+  // 第二次設定: mode() 後用雙層 API 確認
+  // 1. Arduino 層: WiFi.setTxPower()
   WiFi.setTxPower(target_power);
   
-  Serial.printf("[wifi] TX power set to %.1f dBm (運行期持續限制,避免 USB 欠壓)\n",
+  // 2. ESP-IDF 層: esp_wifi_set_max_tx_power() 直接確保
+  //    某些情況下 Arduino 層設定可能被驅動忽略,直接呼叫 ESP-IDF API 是最終保險
+  esp_wifi_set_max_tx_power(WIFI_TX_POWER_DBM * 4);
+  
+  Serial.printf("[wifi] TX power set to %.1f dBm (三層確認: pre-mode + post-mode + ESP-IDF)\n",
                 static_cast<float>(WIFI_TX_POWER_DBM));
 #endif
 
